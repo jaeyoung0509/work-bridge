@@ -57,7 +57,7 @@ docs/                  implementation and testing docs
 ## Next implementation slice
 
 1. Tighten the config schema and precedence rules on top of the Cobra/Viper baseline.
-2. Add degraded-path fixtures and CLI snapshot goldens.
+2. Add more doctor matrix fixtures and broader degraded-path coverage.
 3. Enrich Claude import beyond history-only partial coverage when more local data sources are available.
 4. Add end-to-end CLI snapshots and polish exit-code/reporting consistency.
 

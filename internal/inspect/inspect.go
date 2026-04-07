@@ -229,6 +229,8 @@ func inspectGemini(opts Options) ([]Session, []string, error) {
 
 	sessions := []Session{}
 	unmappedProjects := 0
+	malformedSessions := 0
+	unreadableSessions := 0
 
 	for _, path := range files {
 		if filepath.Ext(path) != ".json" || !strings.Contains(path, string(filepath.Separator)+"chats"+string(filepath.Separator)+"session-") {
@@ -237,11 +239,13 @@ func inspectGemini(opts Options) ([]Session, []string, error) {
 
 		data, err := opts.FS.ReadFile(path)
 		if err != nil {
+			unreadableSessions++
 			continue
 		}
 
 		var raw geminiSession
 		if err := json.Unmarshal(data, &raw); err != nil {
+			malformedSessions++
 			continue
 		}
 
@@ -269,6 +273,12 @@ func inspectGemini(opts Options) ([]Session, []string, error) {
 	}
 	if unmappedProjects > 0 {
 		notes = append(notes, fmt.Sprintf("%d Gemini sessions did not map back to a known project root from projects.json.", unmappedProjects))
+	}
+	if malformedSessions > 0 {
+		notes = append(notes, fmt.Sprintf("%d Gemini session files were skipped because they could not be parsed.", malformedSessions))
+	}
+	if unreadableSessions > 0 {
+		notes = append(notes, fmt.Sprintf("%d Gemini session files were skipped because they could not be read.", unreadableSessions))
 	}
 
 	return sessions, notes, nil

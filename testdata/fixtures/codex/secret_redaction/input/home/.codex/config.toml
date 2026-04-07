@@ -1,0 +1,7 @@
+model = "gpt-5"
+api_key = "secret"
+oauth_token = "secret"
+theme = "ansi"
+
+[workspace]
+profile = "unsafe"

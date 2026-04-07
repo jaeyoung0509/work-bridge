@@ -12,5 +12,8 @@ testdata/fixtures/<tool>/<case>/expected
 Current live cases:
 
 - `codex/basic_latest`
+- `codex/missing_session`
+- `codex/secret_redaction`
 - `gemini/explicit_session`
+- `gemini/malformed_history`
 - `claude/partial_history`

@@ -30,8 +30,8 @@
 ## Next
 
 - [ ] Define concrete CLI config schema and precedence rules
-- [ ] Add degraded-path fixtures (`missing_*`, `corrupt_*`, `secret_*`)
-- [ ] Add CLI snapshot goldens
+- [x] Add degraded-path fixtures (`missing_*`, `corrupt_*`, `secret_*`)
+- [x] Add CLI snapshot goldens
 - [ ] Add doctor matrix fixtures
 
 ## Importers
@@ -78,4 +78,5 @@
 - [x] Importer contract tests
 - [x] Doctor matrix tests
 - [x] Exporter golden tests
+- [x] CLI snapshot goldens
 - [ ] End-to-end CLI snapshots

@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": "{\n  \"bundle_id\": \"bundle-codex-session\",\n  \"files\": [\n    \"bundle.json\",\n    \"spkg-manifest.json\"\n  ],\n  \"path\": \"$TMP/bundle.spkg\",\n  \"source_session_id\": \"codex-session\",\n  \"source_tool\": \"codex\"\n}\n",
+  "stderr": ""
+}
