@@ -9,3 +9,7 @@ testdata/fixtures/<tool>/<case>/input
 testdata/fixtures/<tool>/<case>/expected
 ```
 
+Current live cases:
+
+- `codex/basic_latest`
+- `gemini/explicit_session`

@@ -1,0 +1,7 @@
+{
+  "theme": "ansi",
+  "apiToken": "secret",
+  "history": {
+    "persist": true
+  }
+}

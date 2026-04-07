@@ -1,0 +1,69 @@
+{
+  "bundle_version": "v0",
+  "bundle_id": "bundle-codex-session",
+  "source_tool": "codex",
+  "source_session_id": "codex-session",
+  "imported_at": "2026-04-07T16:00:00Z",
+  "project_root": "/workspace/codex",
+  "task_title": "Codex fixture task",
+  "current_goal": "Codex fixture task",
+  "summary": "Imported Codex session \"Codex fixture task\".",
+  "instruction_artifacts": [
+    {
+      "tool": "codex",
+      "kind": "project_instruction",
+      "path": "$HOME/.codex/AGENTS.md",
+      "scope": "user",
+      "content": "# global codex instructions\n\nPrefer small, reviewable changes.\n",
+      "content_hash": "72f06b1f8e64d9f4792fc5e648b6807dc65425bb7ee0eb898a045727affe2374"
+    },
+    {
+      "tool": "codex",
+      "kind": "project_instruction",
+      "path": "$WORKSPACE/AGENTS.md",
+      "scope": "project",
+      "content": "# project codex instructions\n\nFocus on importer correctness first.\n",
+      "content_hash": "72545d2852f6c0728adc9491549ae71921b35419fbb5c521d61198443f696f16"
+    }
+  ],
+  "settings_snapshot": {
+    "included": {
+      "model": "gpt-5",
+      "project_doc_fallback_filenames": [
+        "AGENTS.md"
+      ]
+    },
+    "excluded_keys": [
+      "auth_token",
+      "experimental"
+    ]
+  },
+  "tool_events": [
+    {
+      "type": "tool_call",
+      "summary": "exec_command {\"cmd\":\"sed -n '1,20p' README.md\"}",
+      "timestamp": "2026-04-07T15:00:00Z",
+      "status": "called",
+      "raw_ref": "call_1"
+    }
+  ],
+  "touched_files": [],
+  "decisions": [],
+  "failures": [],
+  "resume_hints": [
+    "source_session_path=$HOME/.codex/sessions/2026/04/07/rollout-2026-04-07T15-00-00-codex-session.jsonl",
+    "source_tool=codex"
+  ],
+  "token_stats": {
+    "input_tokens": 10,
+    "output_tokens": 5,
+    "total_tokens": 15
+  },
+  "provenance": [
+    "Detects default Codex config and AGENTS files. project_doc_fallback_filenames are not resolved yet.",
+    "Session inventory comes from ~/.codex/session_index.jsonl and session_meta records in ~/.codex/sessions.",
+    "codex.session_meta"
+  ],
+  "redactions": [],
+  "warnings": []
+}

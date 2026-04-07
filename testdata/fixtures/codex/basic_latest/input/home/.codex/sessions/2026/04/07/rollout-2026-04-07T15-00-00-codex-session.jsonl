@@ -1,0 +1,4 @@
+{"timestamp":"2026-04-07T14:59:00Z","type":"session_meta","payload":{"id":"codex-session","timestamp":"2026-04-07T14:59:00Z","cwd":"/workspace/codex"}}
+{"timestamp":"2026-04-07T15:00:00Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"sed -n '1,20p' README.md\"}","call_id":"call_1"}}
+{"timestamp":"2026-04-07T15:00:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}}
+{"timestamp":"2026-04-07T15:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"I inspected the README and identified the next implementation slice."}}

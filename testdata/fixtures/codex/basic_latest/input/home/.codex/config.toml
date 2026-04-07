@@ -1,0 +1,6 @@
+model = "gpt-5"
+project_doc_fallback_filenames = ["AGENTS.md"]
+auth_token = "secret"
+
+[experimental]
+enabled = true

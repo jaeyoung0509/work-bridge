@@ -1,0 +1,65 @@
+{
+  "bundle_version": "v0",
+  "bundle_id": "bundle-gemini-session",
+  "source_tool": "gemini",
+  "source_session_id": "gemini-session",
+  "imported_at": "2026-04-07T16:00:00Z",
+  "project_root": "/workspace/gemini",
+  "task_title": "implement bounded worker pool",
+  "current_goal": "implement bounded worker pool",
+  "summary": "Imported Gemini session \"implement bounded worker pool\".",
+  "instruction_artifacts": [
+    {
+      "tool": "gemini",
+      "kind": "project_instruction",
+      "path": "$HOME/.gemini/GEMINI.md",
+      "scope": "user",
+      "content": "# global gemini instructions\n\nPrefer deterministic output.\n",
+      "content_hash": "5850013ffae667bbc594e37caf108fc01fad19e05ab7435b9a63e4b7688848d4"
+    },
+    {
+      "tool": "gemini",
+      "kind": "project_instruction",
+      "path": "$WORKSPACE/GEMINI.md",
+      "scope": "project",
+      "content": "# project gemini instructions\n\nKeep prompts short and explicit.\n",
+      "content_hash": "d534333cf34472c56b38b70b5d10aa399582a7139480ac78ae38ac5720d00c6e"
+    }
+  ],
+  "settings_snapshot": {
+    "included": {
+      "theme": "ansi"
+    },
+    "excluded_keys": [
+      "apiToken",
+      "history"
+    ]
+  },
+  "tool_events": [
+    {
+      "type": "tool_call",
+      "summary": "read_file {\"path\":\"docs.md\"}",
+      "timestamp": "2026-03-31T20:40:50Z",
+      "status": "success",
+      "raw_ref": "tool_1"
+    }
+  ],
+  "touched_files": [],
+  "decisions": [],
+  "failures": [],
+  "resume_hints": [
+    "source_session_path=$HOME/.gemini/tmp/demo/chats/session-2026-03-31T20-40-demo.json",
+    "source_tool=gemini"
+  ],
+  "token_stats": {
+    "input": 10,
+    "output": 5,
+    "total": 15
+  },
+  "provenance": [
+    "Detects default GEMINI.md and settings.json locations only. Custom context.fileName values are not resolved yet.",
+    "Session inventory comes from ~/.gemini/projects.json and ~/.gemini/tmp/*/chats/session-*.json."
+  ],
+  "redactions": [],
+  "warnings": []
+}

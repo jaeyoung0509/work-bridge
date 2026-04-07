@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -141,6 +142,7 @@ func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe) domain.Setti
 		}
 	}
 
+	sort.Strings(snapshot.ExcludedKeys)
 	return snapshot
 }
 

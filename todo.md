@@ -16,14 +16,17 @@
 - [x] Gemini session bundle importer added
 - [x] Import CLI exit codes for missing sessions added
 - [x] Importer unit tests added
+- [x] Fixture loader helpers added
+- [x] First Codex fixture set added
+- [x] First Gemini fixture set added
+- [x] Importer golden contract tests added
 
 ## Next
 
 - [ ] Define concrete CLI config schema and precedence rules
-- [ ] Add fixture loader helpers
-- [ ] Add first Codex fixture set
-- [ ] Add first Gemini fixture set
-- [ ] Add importer golden outputs
+- [ ] Add degraded-path fixtures (`missing_*`, `corrupt_*`, `secret_*`)
+- [ ] Add CLI snapshot goldens
+- [ ] Add doctor matrix fixtures
 
 ## Importers
 
@@ -63,9 +66,9 @@
 
 ## Testing
 
-- [ ] Golden file helpers
+- [x] Golden file helpers
 - [ ] Fixture naming conventions encoded in helper APIs
-- [ ] Importer contract tests
+- [x] Importer contract tests
 - [ ] Doctor matrix tests
 - [ ] Exporter golden tests
 - [ ] End-to-end CLI snapshots
