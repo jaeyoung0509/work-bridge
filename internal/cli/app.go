@@ -5,10 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"sessionport/internal/platform/fsx"
 )
 
 var Version = "dev"
@@ -24,6 +28,10 @@ type App struct {
 	stderr io.Writer
 	viper  *viper.Viper
 	config Config
+	fs     fsx.FS
+	getwd  func() (string, error)
+	home   func() (string, error)
+	look   func(string) (string, error)
 }
 
 func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
@@ -51,6 +59,10 @@ func New(stdout io.Writer, stderr io.Writer) *App {
 		config: Config{
 			Format: "text",
 		},
+		fs:    fsx.OSFS{},
+		getwd: os.Getwd,
+		home:  os.UserHomeDir,
+		look:  exec.LookPath,
 	}
 }
 
@@ -89,14 +101,20 @@ func (a *App) handleError(err error) int {
 func (a *App) initConfig(cmd *cobra.Command) error {
 	configPath := a.viper.GetString("config")
 	if configPath != "" {
-		a.viper.SetConfigFile(configPath)
-		if err := a.viper.ReadInConfig(); err != nil {
-			return fmt.Errorf("read config: %w", err)
+		if err := a.readConfigFile(configPath); err != nil {
+			return err
 		}
+	} else if candidate, err := a.findDefaultConfigFile(); err != nil {
+		return fmt.Errorf("resolve default config: %w", err)
+	} else if candidate != "" {
+		if err := a.readConfigFile(candidate); err != nil {
+			return err
+		}
+		configPath = candidate
 	}
 
 	a.config = Config{
-		ConfigFile: a.viper.GetString("config"),
+		ConfigFile: configPath,
 		Format:     a.viper.GetString("format"),
 		Verbose:    a.viper.GetBool("verbose"),
 	}
@@ -158,7 +176,7 @@ func (a *App) newDetectCommand() *cobra.Command {
 		Use:   "detect",
 		Short: "Detect local installations and project artifacts.",
 		Args:  cobra.NoArgs,
-		RunE:  placeholderRunE("detect"),
+		RunE:  a.runDetect,
 	}
 	return cmd
 }

@@ -9,11 +9,11 @@
 - [x] CI / Makefile / basic tests added
 - [x] CLI migrated to `cobra`
 - [x] Config/env wiring scaffolded with `viper`
+- [x] `detect` command implemented with text/json output
 
 ## Next
 
 - [ ] Define concrete CLI config schema and precedence rules
-- [ ] Implement `detect` command with JSON/text output
 - [ ] Implement `inspect <tool>` inventory command
 - [ ] Add fixture loader helpers
 - [ ] Add first Codex fixture set

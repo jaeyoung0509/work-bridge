@@ -6,9 +6,8 @@ The CLI scaffold uses `cobra` for command routing and `viper` for config/env wir
 
 ## Current state
 
-This repository is scaffolded for v1 implementation. The command surface exists, but the product commands are still placeholders:
+This repository is scaffolded for v1 implementation. `detect` is live; the rest of the product commands are still placeholders:
 
-- `detect`
 - `inspect`
 - `import`
 - `doctor`
@@ -28,6 +27,8 @@ Global flags already scaffolded:
 make test
 make build
 ./bin/sessionport --help
+./bin/sessionport detect
+./bin/sessionport --format json detect
 ```
 
 ## Layout
@@ -46,7 +47,7 @@ docs/                  implementation and testing docs
 
 1. Add concrete config schema on top of the Cobra/Viper baseline.
 2. Add fixture helpers under `testdata/fixtures`.
-3. Implement `detect` and `inspect`.
+3. Implement `inspect`.
 4. Build Codex and Gemini importers first.
 
 ## Config
@@ -56,3 +57,8 @@ For now, configuration is scaffolded but intentionally minimal. Values can come 
 - CLI flags
 - environment variables such as `SESSIONPORT_FORMAT` and `SESSIONPORT_VERBOSE`
 - a config file passed via `--config`
+- default config files discovered from the current directory, then home directory:
+  - `.sessionport.yaml`
+  - `.sessionport.yml`
+  - `.sessionport.toml`
+  - `.sessionport.json`
