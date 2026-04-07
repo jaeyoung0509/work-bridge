@@ -26,9 +26,7 @@ func (a *App) runImport(cmd *cobra.Command, _ []string) error {
 	}
 
 	switch from {
-	case "codex", "gemini":
-	case "claude":
-		return newExitError(ExitNotImplemented, "claude import is not implemented yet")
+	case "codex", "gemini", "claude":
 	default:
 		return newExitError(ExitUsage, fmt.Sprintf("unsupported source tool %q (expected codex, gemini, or claude)", from))
 	}

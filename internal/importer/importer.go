@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -44,7 +43,7 @@ func Import(opts Options) (domain.SessionBundle, error) {
 	case "gemini":
 		return importGemini(opts)
 	case "claude":
-		return domain.SessionBundle{}, errors.New("claude import is not implemented yet")
+		return importClaude(opts)
 	default:
 		return domain.SessionBundle{}, fmt.Errorf("unsupported tool %q", opts.Tool)
 	}

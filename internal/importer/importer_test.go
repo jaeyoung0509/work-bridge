@@ -123,6 +123,56 @@ func TestImportGeminiExplicitSession(t *testing.T) {
 	}
 }
 
+func TestImportClaudeLatest(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	cwd := filepath.Join(root, "repo")
+
+	mkdirAll(t, filepath.Join(cwd, ".git"))
+	writeFile(t, filepath.Join(homeDir, ".claude", "settings.json"), `{"model":"opus","apiKey":"secret"}`)
+	writeFile(t, filepath.Join(cwd, "CLAUDE.md"), "# project claude")
+	writeFile(t, filepath.Join(homeDir, ".claude", "history.jsonl"), ""+
+		`{"display":"first prompt","timestamp":1767727725221,"project":"/workspace/claude","sessionId":"claude-session"}`+"\n"+
+		`{"display":"latest prompt","timestamp":1767727760078,"project":"/workspace/claude","sessionId":"claude-session"}`+"\n")
+
+	bundle, err := Import(Options{
+		FS:         fsx.OSFS{},
+		CWD:        cwd,
+		HomeDir:    homeDir,
+		Tool:       "claude",
+		Session:    "latest",
+		ImportedAt: "2026-04-07T16:00:00Z",
+		LookPath:   func(string) (string, error) { return "", errors.New("not found") },
+	})
+	if err != nil {
+		t.Fatalf("import failed: %v", err)
+	}
+
+	if bundle.SourceTool != "claude" || bundle.SourceSessionID != "claude-session" {
+		t.Fatalf("unexpected bundle identity: %#v", bundle)
+	}
+	if bundle.ProjectRoot != "/workspace/claude" {
+		t.Fatalf("expected claude project root, got %#v", bundle.ProjectRoot)
+	}
+	if bundle.TaskTitle != "latest prompt" || bundle.CurrentGoal != "latest prompt" {
+		t.Fatalf("expected latest display to drive title/goal, got %#v", bundle)
+	}
+	if bundle.SettingsSnapshot.Included["model"] != "opus" {
+		t.Fatalf("expected model setting, got %#v", bundle.SettingsSnapshot.Included)
+	}
+	if len(bundle.SettingsSnapshot.ExcludedKeys) == 0 {
+		t.Fatalf("expected excluded sensitive keys, got %#v", bundle.SettingsSnapshot)
+	}
+	if len(bundle.InstructionArtifacts) == 0 {
+		t.Fatalf("expected CLAUDE instruction artifact, got %#v", bundle.InstructionArtifacts)
+	}
+	if len(bundle.Warnings) == 0 {
+		t.Fatalf("expected partial import warning, got %#v", bundle.Warnings)
+	}
+}
+
 func mkdirAll(t *testing.T, path string) {
 	t.Helper()
 	if err := (fsx.OSFS{}).MkdirAll(path, 0o755); err != nil {

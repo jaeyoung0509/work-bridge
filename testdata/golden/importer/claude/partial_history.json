@@ -1,0 +1,48 @@
+{
+  "bundle_version": "v0",
+  "bundle_id": "bundle-claude-session",
+  "source_tool": "claude",
+  "source_session_id": "claude-session",
+  "imported_at": "2026-04-07T16:00:00Z",
+  "project_root": "/workspace/claude",
+  "task_title": "latest prompt",
+  "current_goal": "latest prompt",
+  "summary": "Imported Claude session \"latest prompt\" from history.",
+  "instruction_artifacts": [
+    {
+      "tool": "claude",
+      "kind": "project_instruction",
+      "path": "$WORKSPACE/CLAUDE.md",
+      "scope": "project",
+      "content": "# project claude instructions\n\nKeep context concise.\n",
+      "content_hash": "2db967e19240820338b321fa3a328d49513f9a2a9813d7fbdf63e7646b47fba5"
+    }
+  ],
+  "settings_snapshot": {
+    "included": {
+      "model": "opus"
+    },
+    "excluded_keys": [
+      "apiKey"
+    ]
+  },
+  "tool_events": [],
+  "touched_files": [],
+  "decisions": [],
+  "failures": [],
+  "resume_hints": [
+    "source_history_path=$HOME/.claude/history.jsonl",
+    "source_tool=claude",
+    "history_entries=2"
+  ],
+  "token_stats": {},
+  "provenance": [
+    "Detects documented CLAUDE.md and settings.json locations. Managed settings and MCP config files are not included yet.",
+    "Session inventory comes from ~/.claude/history.jsonl. This is a best-effort history-based view, not a full raw session export.",
+    "claude.history_entries=2"
+  ],
+  "redactions": [],
+  "warnings": [
+    "Claude import is history-based. Raw transcript, tool events, and token usage were not available from local session storage."
+  ]
+}

@@ -35,6 +35,13 @@ func TestImportFixturesMatchGolden(t *testing.T) {
 			session:    "gemini-session",
 			importedAt: "2026-04-07T16:00:00Z",
 		},
+		{
+			name:       "claude partial history",
+			tool:       "claude",
+			fixture:    "partial_history",
+			session:    "latest",
+			importedAt: "2026-04-07T16:00:00Z",
+		},
 	}
 
 	for _, tc := range cases {
@@ -72,6 +79,11 @@ func normalizeBundleForGolden(bundle domain.SessionBundle, fixture testutil.Fixt
 		if strings.HasPrefix(hint, "source_session_path=") {
 			path := strings.TrimPrefix(hint, "source_session_path=")
 			bundle.ResumeHints[index] = "source_session_path=" + normalizeGoldenPath(path, fixture)
+			continue
+		}
+		if strings.HasPrefix(hint, "source_history_path=") {
+			path := strings.TrimPrefix(hint, "source_history_path=")
+			bundle.ResumeHints[index] = "source_history_path=" + normalizeGoldenPath(path, fixture)
 		}
 	}
 

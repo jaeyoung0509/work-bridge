@@ -13,3 +13,4 @@ Current live cases:
 
 - `codex/basic_latest`
 - `gemini/explicit_session`
+- `claude/partial_history`

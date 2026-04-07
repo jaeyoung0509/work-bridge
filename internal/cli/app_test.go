@@ -305,6 +305,43 @@ func TestImportCommandReturnsSessionNotFound(t *testing.T) {
 	}
 }
 
+func TestImportClaudeCommandRendersBundleJSON(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	cwd := filepath.Join(root, "repo")
+
+	mkdirAll(t, filepath.Join(cwd, ".git"))
+	writeFile(t, filepath.Join(cwd, "CLAUDE.md"), "# project claude")
+	writeFile(t, filepath.Join(homeDir, ".claude", "settings.json"), `{"model":"opus"}`)
+	writeFile(t, filepath.Join(homeDir, ".claude", "history.jsonl"),
+		`{"display":"latest prompt","timestamp":1767727760078,"project":"/workspace/claude","sessionId":"claude-session"}`+"\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	app := New(&stdout, &stderr)
+	app.getwd = func() (string, error) { return cwd, nil }
+	app.home = func() (string, error) { return homeDir, nil }
+	app.look = func(string) (string, error) { return "", errors.New("not found") }
+	app.clock = fixedClock{value: time.Date(2026, 4, 7, 16, 0, 0, 0, time.UTC)}
+
+	exitCode := app.Run(context.Background(), []string{"import", "--from", "claude", "--session", "latest"})
+
+	if exitCode != ExitOK {
+		t.Fatalf("expected exit code %d, got %d (stderr=%q)", ExitOK, exitCode, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	for _, want := range []string{`"source_tool": "claude"`, `"source_session_id": "claude-session"`, `"project_root": "/workspace/claude"`} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("expected import output to contain %q, got %q", want, stdout.String())
+		}
+	}
+}
+
 type fixedClock struct {
 	value time.Time
 }

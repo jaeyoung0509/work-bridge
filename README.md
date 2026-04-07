@@ -10,7 +10,7 @@ This repository is scaffolded for v1 implementation. The following commands are 
 
 - `detect`
 - `inspect <tool>`
-- `import --from codex|gemini`
+- `import --from codex|gemini|claude`
 
 The following commands are still placeholders:
 
@@ -37,6 +37,7 @@ make build
 ./bin/sessionport --format json inspect gemini --limit 5
 ./bin/sessionport import --from codex --session latest
 ./bin/sessionport import --from gemini --session latest --out ./out/gemini-bundle.json
+./bin/sessionport import --from claude --session latest
 ```
 
 ## Layout
@@ -54,8 +55,8 @@ docs/                  implementation and testing docs
 ## Next implementation slice
 
 1. Tighten the config schema and precedence rules on top of the Cobra/Viper baseline.
-2. Add reusable fixture and golden helpers for importer contract tests.
-3. Implement Claude partial importer coverage.
+2. Add degraded-path fixtures and CLI snapshot goldens.
+3. Enrich Claude import beyond history-only partial coverage when more local data sources are available.
 4. Add doctor/export on top of canonical bundle import.
 
 ## Config
