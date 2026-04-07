@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 )
 
@@ -77,6 +78,45 @@ func AssertGoldenJSON(t *testing.T, goldenPath string, got any) {
 	if string(want) != string(data) {
 		t.Fatalf("golden mismatch for %s\nwant:\n%s\ngot:\n%s", goldenPath, string(want), string(data))
 	}
+}
+
+func SnapshotDir(t *testing.T, root string) map[string]string {
+	t.Helper()
+
+	files := map[string]string{}
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(rel)] = string(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot dir %q failed: %v", root, err)
+	}
+
+	ordered := make(map[string]string, len(files))
+	keys := make([]string, 0, len(files))
+	for key := range files {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		ordered[key] = files[key]
+	}
+	return ordered
 }
 
 func copyTree(src string, dst string) error {

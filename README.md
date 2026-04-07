@@ -12,10 +12,10 @@ This repository is scaffolded for v1 implementation. The following commands are 
 - `inspect <tool>`
 - `import --from codex|gemini|claude`
 - `doctor --from <tool> --target <tool>`
+- `export --bundle <file> --target <tool> --out <dir>`
 
 The following commands are still placeholders:
 
-- `export`
 - `pack`
 - `unpack`
 
@@ -40,6 +40,7 @@ make build
 ./bin/sessionport import --from claude --session latest
 ./bin/sessionport doctor --from codex --session latest --target claude
 ./bin/sessionport --format json doctor --from gemini --session latest --target codex
+./bin/sessionport export --bundle ./out/gemini-bundle.json --target claude --out ./rehydrated
 ```
 
 ## Layout
@@ -59,7 +60,7 @@ docs/                  implementation and testing docs
 1. Tighten the config schema and precedence rules on top of the Cobra/Viper baseline.
 2. Add degraded-path fixtures and CLI snapshot goldens.
 3. Enrich Claude import beyond history-only partial coverage when more local data sources are available.
-4. Implement target exporters on top of import + doctor.
+4. Implement pack/unpack on top of bundle + manifest outputs.
 
 ## Config
 

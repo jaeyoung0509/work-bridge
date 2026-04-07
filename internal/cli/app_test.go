@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -400,6 +401,70 @@ func TestDoctorCommandRejectsUnknownTarget(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `unsupported target tool "wat"`) {
 		t.Fatalf("expected unsupported target error, got %q", stderr.String())
+	}
+}
+
+func TestExportCommandWritesArtifacts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outDir := filepath.Join(root, "out")
+	bundlePath := filepath.Join(root, "bundle.json")
+
+	bundle := map[string]any{
+		"bundle_version":    "v0",
+		"bundle_id":         "bundle-1",
+		"source_tool":       "codex",
+		"source_session_id": "session-1",
+		"project_root":      "/workspace/repo",
+		"task_title":        "export bundle",
+		"current_goal":      "write starter files",
+		"summary":           "Portable working state.",
+		"instruction_artifacts": []map[string]any{
+			{
+				"tool":    "codex",
+				"kind":    "project_instruction",
+				"path":    "/workspace/repo/AGENTS.md",
+				"scope":   "project",
+				"content": "# instructions",
+			},
+		},
+		"settings_snapshot": map[string]any{
+			"included":      map[string]any{"model": "gpt-5"},
+			"excluded_keys": []string{"auth_token"},
+		},
+		"tool_events":   []any{},
+		"touched_files": []any{},
+		"decisions":     []any{},
+		"failures":      []any{},
+		"resume_hints":  []string{"source_session_path=/tmp/session.jsonl"},
+		"token_stats":   map[string]any{},
+		"provenance":    []any{},
+		"redactions":    []any{},
+		"warnings":      []any{},
+	}
+	data, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal bundle failed: %v", err)
+	}
+	writeFile(t, bundlePath, string(data))
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	app := New(&stdout, &stderr)
+	exitCode := app.Run(context.Background(), []string{"--format", "json", "export", "--bundle", bundlePath, "--target", "claude", "--out", outDir})
+
+	if exitCode != ExitOK {
+		t.Fatalf("expected exit code %d, got %d (stderr=%q)", ExitOK, exitCode, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	for _, want := range []string{`"target_tool": "claude"`, `"files"`, `"manifest.json"`} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("expected export output to contain %q, got %q", want, stdout.String())
+		}
 	}
 }
 

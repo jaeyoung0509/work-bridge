@@ -13,6 +13,7 @@
 - [x] `inspect <tool>` inventory command implemented
 - [x] `import --from codex|gemini|claude` implemented
 - [x] `doctor --from <tool> --target <tool>` implemented
+- [x] `export --bundle <file> --target <tool> --out <dir>` implemented
 - [x] Codex session bundle importer added
 - [x] Gemini session bundle importer added
 - [x] Claude partial bundle importer added
@@ -30,9 +31,7 @@
 - [ ] Add degraded-path fixtures (`missing_*`, `corrupt_*`, `secret_*`)
 - [ ] Add CLI snapshot goldens
 - [ ] Add doctor matrix fixtures
-- [ ] Start Codex exporter
-- [ ] Start Gemini exporter
-- [ ] Start Claude exporter
+- [ ] Start pack/unpack
 
 ## Importers
 
@@ -60,10 +59,10 @@
 
 ## Exporters
 
-- [ ] Codex exporter
-- [ ] Gemini exporter
-- [ ] Claude exporter
-- [ ] Export manifest format
+- [x] Codex exporter
+- [x] Gemini exporter
+- [x] Claude exporter
+- [x] Export manifest format
 
 ## Package
 
@@ -77,5 +76,5 @@
 - [ ] Fixture naming conventions encoded in helper APIs
 - [x] Importer contract tests
 - [x] Doctor matrix tests
-- [ ] Exporter golden tests
+- [x] Exporter golden tests
 - [ ] End-to-end CLI snapshots

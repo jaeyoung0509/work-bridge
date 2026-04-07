@@ -5,6 +5,8 @@ const (
 	ExitRuntime         = 1
 	ExitUsage           = 2
 	ExitSessionNotFound = 3
+	ExitParseFailure    = 4
+	ExitExportFailure   = 5
 	ExitNotImplemented  = 10
 )
 

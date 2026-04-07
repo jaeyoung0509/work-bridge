@@ -226,7 +226,7 @@ func (a *App) newExportCommand() *cobra.Command {
 		Use:   "export",
 		Short: "Generate target-native starter artifacts from a bundle.",
 		Args:  cobra.NoArgs,
-		RunE:  placeholderRunE("export"),
+		RunE:  a.runExport,
 	}
 	cmd.Flags().String("bundle", "", "Path to a canonical bundle JSON file.")
 	cmd.Flags().String("target", "", "Target tool: codex, gemini, claude.")
