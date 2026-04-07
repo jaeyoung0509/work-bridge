@@ -186,8 +186,9 @@ func (a *App) newInspectCommand() *cobra.Command {
 		Use:   "inspect <tool>",
 		Short: "Inspect a tool's importable sessions and assets.",
 		Args:  cobra.ExactArgs(1),
-		RunE:  placeholderRunE("inspect"),
+		RunE:  a.runInspect,
 	}
+	cmd.Flags().Int("limit", 20, "Maximum number of sessions to show.")
 	return cmd
 }
 

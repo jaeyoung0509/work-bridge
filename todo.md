@@ -10,11 +10,11 @@
 - [x] CLI migrated to `cobra`
 - [x] Config/env wiring scaffolded with `viper`
 - [x] `detect` command implemented with text/json output
+- [x] `inspect <tool>` inventory command implemented
 
 ## Next
 
 - [ ] Define concrete CLI config schema and precedence rules
-- [ ] Implement `inspect <tool>` inventory command
 - [ ] Add fixture loader helpers
 - [ ] Add first Codex fixture set
 - [ ] Add first Gemini fixture set

@@ -6,9 +6,8 @@ The CLI scaffold uses `cobra` for command routing and `viper` for config/env wir
 
 ## Current state
 
-This repository is scaffolded for v1 implementation. `detect` is live; the rest of the product commands are still placeholders:
+This repository is scaffolded for v1 implementation. `detect` and `inspect` are live; the rest of the product commands are still placeholders:
 
-- `inspect`
 - `import`
 - `doctor`
 - `export`
@@ -29,6 +28,8 @@ make build
 ./bin/sessionport --help
 ./bin/sessionport detect
 ./bin/sessionport --format json detect
+./bin/sessionport inspect codex --limit 5
+./bin/sessionport --format json inspect gemini --limit 5
 ```
 
 ## Layout
@@ -47,8 +48,8 @@ docs/                  implementation and testing docs
 
 1. Add concrete config schema on top of the Cobra/Viper baseline.
 2. Add fixture helpers under `testdata/fixtures`.
-3. Implement `inspect`.
-4. Build Codex and Gemini importers first.
+3. Build Codex and Gemini importers first.
+4. Add doctor/export on top of canonical bundle import.
 
 ## Config
 

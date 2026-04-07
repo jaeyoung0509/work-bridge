@@ -176,19 +176,59 @@ func TestDetectCommandLoadsDefaultConfigFileFromCwd(t *testing.T) {
 	}
 }
 
-func TestPlaceholderCommandReturnsNotImplemented(t *testing.T) {
+func TestInspectCommandRendersTextOutput(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	cwd := filepath.Join(root, "repo")
+
+	mkdirAll(t, filepath.Join(cwd, ".git"))
+	writeFile(t, filepath.Join(homeDir, ".codex", "session_index.jsonl"), `{"id":"11111111-1111-1111-1111-111111111111","thread_name":"inspect me","updated_at":"2026-04-07T15:00:00Z"}`)
+	writeFile(t, filepath.Join(homeDir, ".codex", "sessions", "2026", "04", "07", "rollout-2026-04-07T15-00-00-11111111-1111-1111-1111-111111111111.jsonl"),
+		`{"type":"session_meta","payload":{"timestamp":"2026-04-07T14:59:00Z","cwd":"/workspace/codex"}}`+"\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	app := New(&stdout, &stderr)
+	app.getwd = func() (string, error) { return cwd, nil }
+	app.home = func() (string, error) { return homeDir, nil }
+	app.look = func(binary string) (string, error) {
+		if binary == "codex" {
+			return "/opt/bin/codex", nil
+		}
+		return "", errors.New("not found")
+	}
+
+	exitCode := app.Run(context.Background(), []string{"inspect", "codex"})
+
+	if exitCode != ExitOK {
+		t.Fatalf("expected exit code %d, got %d (stderr=%q)", ExitOK, exitCode, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	for _, want := range []string{"Tool: codex", "inspect me", "/workspace/codex"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("expected inspect output to contain %q, got %q", want, stdout.String())
+		}
+	}
+}
+
+func TestInspectCommandRejectsUnknownTool(t *testing.T) {
 	t.Parallel()
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	exitCode := Run(context.Background(), []string{"inspect", "codex"}, &stdout, &stderr)
+	exitCode := Run(context.Background(), []string{"inspect", "wat"}, &stdout, &stderr)
 
-	if exitCode != ExitNotImplemented {
-		t.Fatalf("expected exit code %d, got %d", ExitNotImplemented, exitCode)
+	if exitCode != ExitUsage {
+		t.Fatalf("expected exit code %d, got %d", ExitUsage, exitCode)
 	}
-	if !strings.Contains(stderr.String(), "inspect command is scaffolded but not implemented yet") {
-		t.Fatalf("expected placeholder message, got %q", stderr.String())
+	if !strings.Contains(stderr.String(), `unsupported tool "wat"`) {
+		t.Fatalf("expected unsupported tool error, got %q", stderr.String())
 	}
 }
 
