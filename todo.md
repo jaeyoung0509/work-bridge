@@ -11,6 +11,11 @@
 - [x] Config/env wiring scaffolded with `viper`
 - [x] `detect` command implemented with text/json output
 - [x] `inspect <tool>` inventory command implemented
+- [x] `import --from codex|gemini` implemented
+- [x] Codex session bundle importer added
+- [x] Gemini session bundle importer added
+- [x] Import CLI exit codes for missing sessions added
+- [x] Importer unit tests added
 
 ## Next
 
@@ -18,18 +23,22 @@
 - [ ] Add fixture loader helpers
 - [ ] Add first Codex fixture set
 - [ ] Add first Gemini fixture set
+- [ ] Add importer golden outputs
 
 ## Importers
 
-- [ ] Codex path resolver
-- [ ] Codex session inventory + latest session selection
-- [ ] Codex config allowlist import
-- [ ] Codex `AGENTS.md` import
-- [ ] Gemini path resolver
-- [ ] Gemini session/history import
-- [ ] Gemini settings allowlist import
-- [ ] Gemini `GEMINI.md` import
+- [x] Codex path resolver
+- [x] Codex session inventory + latest session selection
+- [x] Codex config allowlist import
+- [x] Codex `AGENTS.md` import
+- [x] Gemini path resolver
+- [x] Gemini session/history import
+- [x] Gemini settings allowlist import
+- [x] Gemini `GEMINI.md` import
 - [ ] Claude partial instruction/memory import
+- [ ] Claude session/history import
+- [ ] Redaction policy hardening for imported settings
+- [ ] Touched file / decision / failure extraction heuristics
 
 ## Core
 

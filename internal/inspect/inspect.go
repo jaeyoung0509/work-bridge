@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -49,6 +50,8 @@ type geminiMessage struct {
 	Type    string          `json:"type"`
 	Content json.RawMessage `json:"content"`
 }
+
+var codexRolloutNamePattern = regexp.MustCompile(`^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)$`)
 
 func Run(opts Options) (Report, error) {
 	if opts.FS == nil {
@@ -466,12 +469,17 @@ func codexSessionPathMap(fs fsx.FS, root string) (map[string]string, error) {
 		if filepath.Ext(path) != ".jsonl" {
 			continue
 		}
-		base := strings.TrimSuffix(filepath.Base(path), ".jsonl")
-		if len(base) < 36 {
+
+		if sessionID, err := readCodexSessionID(fs, path); err == nil && sessionID != "" {
+			mapped[sessionID] = path
 			continue
 		}
-		sessionID := base[len(base)-36:]
-		mapped[sessionID] = path
+
+		base := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+		matches := codexRolloutNamePattern.FindStringSubmatch(base)
+		if len(matches) == 2 && matches[1] != "" {
+			mapped[matches[1]] = path
+		}
 	}
 
 	return mapped, nil
@@ -521,6 +529,33 @@ func firstLine(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	return bytesTrimSpace(line), nil
+}
+
+func readCodexSessionID(fs fsx.FS, path string) (string, error) {
+	data, err := fs.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+
+	line, err := firstLine(data)
+	if err != nil {
+		return "", err
+	}
+
+	var payload struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID string `json:"id"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(line, &payload); err != nil {
+		return "", err
+	}
+	if payload.Type != "session_meta" {
+		return "", fmt.Errorf("unexpected codex record type %q", payload.Type)
+	}
+
+	return payload.Payload.ID, nil
 }
 
 func bytesTrimSpace(data []byte) []byte {

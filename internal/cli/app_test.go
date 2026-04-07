@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sessionport/internal/platform/fsx"
 )
@@ -230,6 +231,86 @@ func TestInspectCommandRejectsUnknownTool(t *testing.T) {
 	if !strings.Contains(stderr.String(), `unsupported tool "wat"`) {
 		t.Fatalf("expected unsupported tool error, got %q", stderr.String())
 	}
+}
+
+func TestImportCommandRendersBundleJSON(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	cwd := filepath.Join(root, "repo")
+
+	mkdirAll(t, filepath.Join(cwd, ".git"))
+	writeFile(t, filepath.Join(homeDir, ".codex", "config.toml"), "model = \"gpt-5\"")
+	writeFile(t, filepath.Join(homeDir, ".codex", "session_index.jsonl"),
+		`{"id":"codex-session","thread_name":"import codex","updated_at":"2026-04-07T15:00:00Z"}`+"\n")
+	writeFile(t, filepath.Join(homeDir, ".codex", "sessions", "2026", "04", "07", "rollout-2026-04-07T15-00-00-codex-session.jsonl"),
+		`{"timestamp":"2026-04-07T14:59:00Z","type":"session_meta","payload":{"id":"codex-session","timestamp":"2026-04-07T14:59:00Z","cwd":"/workspace/codex"}}`+"\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	app := New(&stdout, &stderr)
+	app.getwd = func() (string, error) { return cwd, nil }
+	app.home = func() (string, error) { return homeDir, nil }
+	app.look = func(binary string) (string, error) {
+		if binary == "codex" {
+			return "/opt/bin/codex", nil
+		}
+		return "", errors.New("not found")
+	}
+	app.clock = fixedClock{value: time.Date(2026, 4, 7, 16, 0, 0, 0, time.UTC)}
+
+	exitCode := app.Run(context.Background(), []string{"import", "--from", "codex", "--session", "latest"})
+
+	if exitCode != ExitOK {
+		t.Fatalf("expected exit code %d, got %d (stderr=%q)", ExitOK, exitCode, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	for _, want := range []string{`"source_tool": "codex"`, `"source_session_id": "codex-session"`, `"project_root": "/workspace/codex"`} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("expected import output to contain %q, got %q", want, stdout.String())
+		}
+	}
+}
+
+func TestImportCommandReturnsSessionNotFound(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	cwd := filepath.Join(root, "repo")
+
+	mkdirAll(t, filepath.Join(cwd, ".git"))
+	writeFile(t, filepath.Join(homeDir, ".codex", "session_index.jsonl"), "")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	app := New(&stdout, &stderr)
+	app.getwd = func() (string, error) { return cwd, nil }
+	app.home = func() (string, error) { return homeDir, nil }
+	app.look = func(string) (string, error) { return "", errors.New("not found") }
+	app.clock = fixedClock{value: time.Date(2026, 4, 7, 16, 0, 0, 0, time.UTC)}
+
+	exitCode := app.Run(context.Background(), []string{"import", "--from", "codex", "--session", "latest"})
+
+	if exitCode != ExitSessionNotFound {
+		t.Fatalf("expected exit code %d, got %d", ExitSessionNotFound, exitCode)
+	}
+	if !strings.Contains(stderr.String(), `codex session "latest" was not found`) {
+		t.Fatalf("expected session not found error, got %q", stderr.String())
+	}
+}
+
+type fixedClock struct {
+	value time.Time
+}
+
+func (f fixedClock) Now() time.Time {
+	return f.value
 }
 
 func mkdirAll(t *testing.T, path string) {

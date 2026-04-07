@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"sessionport/internal/platform/clockx"
 	"sessionport/internal/platform/fsx"
 )
 
@@ -32,6 +33,7 @@ type App struct {
 	getwd  func() (string, error)
 	home   func() (string, error)
 	look   func(string) (string, error)
+	clock  clockx.Clock
 }
 
 func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
@@ -63,6 +65,7 @@ func New(stdout io.Writer, stderr io.Writer) *App {
 		getwd: os.Getwd,
 		home:  os.UserHomeDir,
 		look:  exec.LookPath,
+		clock: clockx.SystemClock{},
 	}
 }
 
@@ -197,7 +200,7 @@ func (a *App) newImportCommand() *cobra.Command {
 		Use:   "import",
 		Short: "Import a session into the canonical bundle format.",
 		Args:  cobra.NoArgs,
-		RunE:  placeholderRunE("import"),
+		RunE:  a.runImport,
 	}
 	cmd.Flags().String("from", "", "Source tool: codex, gemini, claude.")
 	cmd.Flags().String("session", "latest", "Source session identifier or latest.")

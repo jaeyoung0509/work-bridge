@@ -1,10 +1,11 @@
 package cli
 
 const (
-	ExitOK             = 0
-	ExitRuntime        = 1
-	ExitUsage          = 2
-	ExitNotImplemented = 10
+	ExitOK              = 0
+	ExitRuntime         = 1
+	ExitUsage           = 2
+	ExitSessionNotFound = 3
+	ExitNotImplemented  = 10
 )
 
 type ExitError struct {
