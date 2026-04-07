@@ -213,7 +213,7 @@ func (a *App) newDoctorCommand() *cobra.Command {
 		Use:   "doctor",
 		Short: "Report portability and compatibility for a target tool.",
 		Args:  cobra.NoArgs,
-		RunE:  placeholderRunE("doctor"),
+		RunE:  a.runDoctor,
 	}
 	cmd.Flags().String("from", "", "Source tool: codex, gemini, claude.")
 	cmd.Flags().String("session", "latest", "Source session identifier or latest.")

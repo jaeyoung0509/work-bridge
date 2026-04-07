@@ -342,6 +342,67 @@ func TestImportClaudeCommandRendersBundleJSON(t *testing.T) {
 	}
 }
 
+func TestDoctorCommandRendersJSONOutput(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	cwd := filepath.Join(root, "repo")
+
+	mkdirAll(t, filepath.Join(cwd, ".git"))
+	writeFile(t, filepath.Join(homeDir, ".codex", "config.toml"), "model = \"gpt-5\"\nauth_token = \"secret\"")
+	writeFile(t, filepath.Join(cwd, "AGENTS.md"), "# project instructions")
+	writeFile(t, filepath.Join(homeDir, ".codex", "session_index.jsonl"),
+		`{"id":"codex-session","thread_name":"doctor codex","updated_at":"2026-04-07T15:00:00Z"}`+"\n")
+	writeFile(t, filepath.Join(homeDir, ".codex", "sessions", "2026", "04", "07", "rollout-2026-04-07T15-00-00-codex-session.jsonl"), ""+
+		`{"timestamp":"2026-04-07T14:59:00Z","type":"session_meta","payload":{"id":"codex-session","timestamp":"2026-04-07T14:59:00Z","cwd":"/workspace/codex"}}`+"\n"+
+		`{"timestamp":"2026-04-07T15:00:00Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"sed -n '1,10p' README.md\"}","call_id":"call_1"}}`+"\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	app := New(&stdout, &stderr)
+	app.getwd = func() (string, error) { return cwd, nil }
+	app.home = func() (string, error) { return homeDir, nil }
+	app.look = func(binary string) (string, error) {
+		if binary == "codex" {
+			return "/opt/bin/codex", nil
+		}
+		return "", errors.New("not found")
+	}
+	app.clock = fixedClock{value: time.Date(2026, 4, 7, 16, 0, 0, 0, time.UTC)}
+
+	exitCode := app.Run(context.Background(), []string{"--format", "json", "doctor", "--from", "codex", "--session", "latest", "--target", "claude"})
+
+	if exitCode != ExitOK {
+		t.Fatalf("expected exit code %d, got %d (stderr=%q)", ExitOK, exitCode, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	for _, want := range []string{`"source_tool": "codex"`, `"target_tool": "claude"`, `"generated_artifacts"`} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("expected doctor output to contain %q, got %q", want, stdout.String())
+		}
+	}
+}
+
+func TestDoctorCommandRejectsUnknownTarget(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := Run(context.Background(), []string{"doctor", "--from", "codex", "--target", "wat"}, &stdout, &stderr)
+
+	if exitCode != ExitUsage {
+		t.Fatalf("expected exit code %d, got %d", ExitUsage, exitCode)
+	}
+	if !strings.Contains(stderr.String(), `unsupported target tool "wat"`) {
+		t.Fatalf("expected unsupported target error, got %q", stderr.String())
+	}
+}
+
 type fixedClock struct {
 	value time.Time
 }

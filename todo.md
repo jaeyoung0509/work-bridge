@@ -12,6 +12,7 @@
 - [x] `detect` command implemented with text/json output
 - [x] `inspect <tool>` inventory command implemented
 - [x] `import --from codex|gemini|claude` implemented
+- [x] `doctor --from <tool> --target <tool>` implemented
 - [x] Codex session bundle importer added
 - [x] Gemini session bundle importer added
 - [x] Claude partial bundle importer added
@@ -29,6 +30,9 @@
 - [ ] Add degraded-path fixtures (`missing_*`, `corrupt_*`, `secret_*`)
 - [ ] Add CLI snapshot goldens
 - [ ] Add doctor matrix fixtures
+- [ ] Start Codex exporter
+- [ ] Start Gemini exporter
+- [ ] Start Claude exporter
 
 ## Importers
 
@@ -52,7 +56,7 @@
 - [ ] Provenance aggregation
 - [ ] Warning/redaction aggregation
 - [ ] Bundle validation pass tightening
-- [ ] Doctor compatibility matrix
+- [x] Doctor compatibility matrix
 
 ## Exporters
 
@@ -72,6 +76,6 @@
 - [x] Golden file helpers
 - [ ] Fixture naming conventions encoded in helper APIs
 - [x] Importer contract tests
-- [ ] Doctor matrix tests
+- [x] Doctor matrix tests
 - [ ] Exporter golden tests
 - [ ] End-to-end CLI snapshots
