@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -464,6 +465,97 @@ func TestExportCommandWritesArtifacts(t *testing.T) {
 	for _, want := range []string{`"target_tool": "claude"`, `"files"`, `"manifest.json"`} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("expected export output to contain %q, got %q", want, stdout.String())
+		}
+	}
+}
+
+func TestPackCommandWritesArchive(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	cwd := filepath.Join(root, "repo")
+	archivePath := filepath.Join(root, "bundle.spkg")
+
+	mkdirAll(t, filepath.Join(cwd, ".git"))
+	writeFile(t, filepath.Join(homeDir, ".codex", "config.toml"), "model = \"gpt-5\"")
+	writeFile(t, filepath.Join(homeDir, ".codex", "session_index.jsonl"),
+		`{"id":"codex-session","thread_name":"pack codex","updated_at":"2026-04-07T15:00:00Z"}`+"\n")
+	writeFile(t, filepath.Join(homeDir, ".codex", "sessions", "2026", "04", "07", "rollout-2026-04-07T15-00-00-codex-session.jsonl"),
+		`{"timestamp":"2026-04-07T14:59:00Z","type":"session_meta","payload":{"id":"codex-session","timestamp":"2026-04-07T14:59:00Z","cwd":"/workspace/codex"}}`+"\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	app := New(&stdout, &stderr)
+	app.getwd = func() (string, error) { return cwd, nil }
+	app.home = func() (string, error) { return homeDir, nil }
+	app.look = func(binary string) (string, error) {
+		if binary == "codex" {
+			return "/opt/bin/codex", nil
+		}
+		return "", errors.New("not found")
+	}
+	app.clock = fixedClock{value: time.Date(2026, 4, 7, 16, 0, 0, 0, time.UTC)}
+
+	exitCode := app.Run(context.Background(), []string{"--format", "json", "pack", "--from", "codex", "--session", "latest", "--out", archivePath})
+
+	if exitCode != ExitOK {
+		t.Fatalf("expected exit code %d, got %d (stderr=%q)", ExitOK, exitCode, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"path": "`+archivePath+`"`) {
+		t.Fatalf("expected archive path in output, got %q", stdout.String())
+	}
+}
+
+func TestUnpackCommandWritesArtifacts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	cwd := filepath.Join(root, "repo")
+	archivePath := filepath.Join(root, "bundle.spkg")
+	outDir := filepath.Join(root, "unpacked")
+
+	mkdirAll(t, filepath.Join(cwd, ".git"))
+	writeFile(t, filepath.Join(homeDir, ".codex", "config.toml"), "model = \"gpt-5\"")
+	writeFile(t, filepath.Join(homeDir, ".codex", "session_index.jsonl"),
+		`{"id":"codex-session","thread_name":"unpack codex","updated_at":"2026-04-07T15:00:00Z"}`+"\n")
+	writeFile(t, filepath.Join(homeDir, ".codex", "sessions", "2026", "04", "07", "rollout-2026-04-07T15-00-00-codex-session.jsonl"),
+		`{"timestamp":"2026-04-07T14:59:00Z","type":"session_meta","payload":{"id":"codex-session","timestamp":"2026-04-07T14:59:00Z","cwd":"/workspace/codex"}}`+"\n")
+
+	app := New(io.Discard, io.Discard)
+	app.getwd = func() (string, error) { return cwd, nil }
+	app.home = func() (string, error) { return homeDir, nil }
+	app.look = func(binary string) (string, error) {
+		if binary == "codex" {
+			return "/opt/bin/codex", nil
+		}
+		return "", errors.New("not found")
+	}
+	app.clock = fixedClock{value: time.Date(2026, 4, 7, 16, 0, 0, 0, time.UTC)}
+	if exitCode := app.Run(context.Background(), []string{"pack", "--from", "codex", "--session", "latest", "--out", archivePath}); exitCode != ExitOK {
+		t.Fatalf("expected pack exit code %d, got %d", ExitOK, exitCode)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	app = New(&stdout, &stderr)
+	exitCode := app.Run(context.Background(), []string{"--format", "json", "unpack", "--file", archivePath, "--target", "claude", "--out", outDir})
+
+	if exitCode != ExitOK {
+		t.Fatalf("expected exit code %d, got %d (stderr=%q)", ExitOK, exitCode, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	for _, want := range []string{`"bundle_path"`, `"export_manifest"`, `"manifest.json"`} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("expected unpack output to contain %q, got %q", want, stdout.String())
 		}
 	}
 }

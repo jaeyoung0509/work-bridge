@@ -14,6 +14,8 @@
 - [x] `import --from codex|gemini|claude` implemented
 - [x] `doctor --from <tool> --target <tool>` implemented
 - [x] `export --bundle <file> --target <tool> --out <dir>` implemented
+- [x] `pack --from <tool> --session <id|latest> --out <file>` implemented
+- [x] `unpack --file <file> --target <tool> --out <dir>` implemented
 - [x] Codex session bundle importer added
 - [x] Gemini session bundle importer added
 - [x] Claude partial bundle importer added
@@ -31,7 +33,6 @@
 - [ ] Add degraded-path fixtures (`missing_*`, `corrupt_*`, `secret_*`)
 - [ ] Add CLI snapshot goldens
 - [ ] Add doctor matrix fixtures
-- [ ] Start pack/unpack
 
 ## Importers
 
@@ -66,9 +67,9 @@
 
 ## Package
 
-- [ ] `.spkg` manifest spec
-- [ ] Pack command
-- [ ] Unpack command
+- [x] `.spkg` manifest spec
+- [x] Pack command
+- [x] Unpack command
 
 ## Testing
 

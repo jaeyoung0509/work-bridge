@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"sessionport/internal/platform/archivex"
 	"sessionport/internal/platform/clockx"
 	"sessionport/internal/platform/fsx"
 )
@@ -34,6 +35,7 @@ type App struct {
 	home   func() (string, error)
 	look   func(string) (string, error)
 	clock  clockx.Clock
+	zip    archivex.ZIPArchive
 }
 
 func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
@@ -66,6 +68,7 @@ func New(stdout io.Writer, stderr io.Writer) *App {
 		home:  os.UserHomeDir,
 		look:  exec.LookPath,
 		clock: clockx.SystemClock{},
+		zip:   archivex.ZIPArchive{},
 	}
 }
 
@@ -239,7 +242,7 @@ func (a *App) newPackCommand() *cobra.Command {
 		Use:   "pack",
 		Short: "Package a canonical bundle as a portable .spkg archive.",
 		Args:  cobra.NoArgs,
-		RunE:  placeholderRunE("pack"),
+		RunE:  a.runPack,
 	}
 	cmd.Flags().String("from", "", "Source tool: codex, gemini, claude.")
 	cmd.Flags().String("session", "latest", "Source session identifier or latest.")
@@ -252,7 +255,7 @@ func (a *App) newUnpackCommand() *cobra.Command {
 		Use:   "unpack",
 		Short: "Unpack a .spkg archive and prepare target artifacts.",
 		Args:  cobra.NoArgs,
-		RunE:  placeholderRunE("unpack"),
+		RunE:  a.runUnpack,
 	}
 	cmd.Flags().String("file", "", "Path to a .spkg archive.")
 	cmd.Flags().String("target", "", "Target tool: codex, gemini, claude.")
