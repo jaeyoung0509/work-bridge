@@ -1081,7 +1081,7 @@ func (a *App) probeMCPHTTPServer(ctx context.Context, server tui.MCPServerConfig
 		return result, fmt.Errorf("missing %s url", result.Transport)
 	}
 	session := &mcpHTTPClientSession{
-		client: &http.Client{},
+		client: newMCPHTTPClient(),
 		url:    server.URL,
 	}
 	return probeMCPRuntimeSession(ctx, session, result)
@@ -1096,7 +1096,7 @@ func (a *App) probeMCPSSEServer(ctx context.Context, server tui.MCPServerConfig)
 	if strings.TrimSpace(server.URL) == "" {
 		return result, fmt.Errorf("missing sse url")
 	}
-	session, err := newMCPSSEClientSession(ctx, &http.Client{}, server.URL)
+	session, err := newMCPSSEClientSession(ctx, newMCPHTTPClient(), newMCPHTTPClient(), server.URL)
 	if err != nil {
 		return result, err
 	}
@@ -1419,6 +1419,7 @@ func (s *mcpHTTPClientSession) listCount(ctx context.Context, requestID *int, me
 }
 
 func (s *mcpHTTPClientSession) close() error {
+	closeHTTPClientIdleConnections(s.client)
 	return nil
 }
 
@@ -1473,20 +1474,21 @@ func (s *mcpHTTPClientSession) postJSON(ctx context.Context, payload any) ([]mcp
 }
 
 type mcpSSEClientSession struct {
-	client     *http.Client
-	streamResp *http.Response
-	endpoint   string
-	messages   chan mcpEnvelope
-	errs       chan error
+	streamClient *http.Client
+	postClient   *http.Client
+	streamResp   *http.Response
+	endpoint     string
+	messages     chan mcpEnvelope
+	errs         chan error
 }
 
-func newMCPSSEClientSession(ctx context.Context, client *http.Client, streamURL string) (*mcpSSEClientSession, error) {
+func newMCPSSEClientSession(ctx context.Context, streamClient *http.Client, postClient *http.Client, streamURL string) (*mcpSSEClientSession, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "text/event-stream")
-	resp, err := client.Do(req)
+	resp, err := streamClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1497,10 +1499,11 @@ func newMCPSSEClientSession(ctx context.Context, client *http.Client, streamURL 
 	}
 
 	session := &mcpSSEClientSession{
-		client:     client,
-		streamResp: resp,
-		messages:   make(chan mcpEnvelope, 16),
-		errs:       make(chan error, 1),
+		streamClient: streamClient,
+		postClient:   postClient,
+		streamResp:   resp,
+		messages:     make(chan mcpEnvelope, 16),
+		errs:         make(chan error, 1),
 	}
 
 	endpointCh := make(chan string, 1)
@@ -1600,6 +1603,8 @@ func (s *mcpSSEClientSession) listCount(ctx context.Context, requestID *int, met
 }
 
 func (s *mcpSSEClientSession) close() error {
+	closeHTTPClientIdleConnections(s.postClient)
+	closeHTTPClientIdleConnections(s.streamClient)
 	if s.streamResp != nil && s.streamResp.Body != nil {
 		return s.streamResp.Body.Close()
 	}
@@ -1654,7 +1659,7 @@ func (s *mcpSSEClientSession) postPayload(ctx context.Context, payload any) ([]m
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := s.client.Do(req)
+	resp, err := s.postClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1753,6 +1758,27 @@ func readSSEEvent(reader *bufio.Reader) (string, string, error) {
 		if strings.HasPrefix(line, "data:") {
 			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
 		}
+	}
+}
+
+func newMCPHTTPClient() *http.Client {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if ok && base != nil {
+		transport := base.Clone()
+		return &http.Client{Transport: transport}
+	}
+	return &http.Client{}
+}
+
+func closeHTTPClientIdleConnections(client *http.Client) {
+	if client == nil || client.Transport == nil {
+		return
+	}
+	type idleCloser interface {
+		CloseIdleConnections()
+	}
+	if closer, ok := client.Transport.(idleCloser); ok {
+		closer.CloseIdleConnections()
 	}
 }
 
