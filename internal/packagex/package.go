@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"sessionport/internal/doctor"
-	"sessionport/internal/domain"
-	"sessionport/internal/exporter"
-	"sessionport/internal/platform/archivex"
-	"sessionport/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/doctor"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/exporter"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/archivex"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 )
 
 const (

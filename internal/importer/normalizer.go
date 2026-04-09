@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"sessionport/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
 )
 
 func (SessionNormalizer) Normalize(raw RawImportResult) (domain.SessionBundle, error) {

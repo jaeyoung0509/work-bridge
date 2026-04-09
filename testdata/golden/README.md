@@ -10,5 +10,5 @@ Use this directory for stable expected outputs:
 To refresh goldens locally:
 
 ```bash
-SESSIONPORT_UPDATE_GOLDEN=1 go test ./...
+WORK_BRIDGE_UPDATE_GOLDEN=1 go test ./...
 ```

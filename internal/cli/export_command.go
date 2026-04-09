@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"sessionport/internal/doctor"
-	"sessionport/internal/domain"
-	"sessionport/internal/exporter"
+	"github.com/jaeyoung0509/work-bridge/internal/doctor"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/exporter"
 )
 
 func (a *App) runExport(cmd *cobra.Command, _ []string) error {

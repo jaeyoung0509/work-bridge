@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"sessionport/internal/inspect"
+	"github.com/jaeyoung0509/work-bridge/internal/inspect"
 )
 
 func (a *App) runInspect(cmd *cobra.Command, args []string) error {

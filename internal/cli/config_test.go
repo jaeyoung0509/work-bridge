@@ -18,7 +18,7 @@ func TestDetectCommandUsesConfiguredToolPaths(t *testing.T) {
 	customCodexDir := filepath.Join(root, "alt-codex")
 
 	mkdirAll(t, filepath.Join(cwd, ".git"))
-	writeFile(t, filepath.Join(cwd, ".sessionport.json"), `{
+	writeFile(t, filepath.Join(cwd, ".work-bridge.json"), `{
   "format": "json",
   "paths": {
     "codex": "`+filepath.ToSlash(customCodexDir)+`"
@@ -52,7 +52,7 @@ func TestImportCommandUsesConfiguredOutputDefault(t *testing.T) {
 	defaultOut := filepath.Join(root, "artifacts", "bundle.json")
 
 	mkdirAll(t, filepath.Join(cwd, ".git"))
-	writeFile(t, filepath.Join(cwd, ".sessionport.json"), `{
+	writeFile(t, filepath.Join(cwd, ".work-bridge.json"), `{
   "output": {
     "import_bundle_path": "`+filepath.ToSlash(defaultOut)+`"
   }
@@ -96,7 +96,7 @@ func TestFlagOverridesEnvFormat(t *testing.T) {
 
 	mkdirAll(t, filepath.Join(cwd, ".git"))
 	writeFile(t, filepath.Join(homeDir, ".claude", "settings.json"), "{}")
-	t.Setenv("SESSIONPORT_FORMAT", "json")
+	t.Setenv("WORK_BRIDGE_FORMAT", "json")
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

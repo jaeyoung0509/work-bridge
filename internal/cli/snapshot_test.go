@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"sessionport/internal/importer"
-	"sessionport/internal/platform/fsx"
-	"sessionport/internal/testutil"
+	"github.com/jaeyoung0509/work-bridge/internal/importer"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/testutil"
 )
 
 type cliSnapshot struct {

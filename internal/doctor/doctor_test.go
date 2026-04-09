@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"sessionport/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
 )
 
 func TestAnalyzeMatrix(t *testing.T) {
@@ -37,19 +37,19 @@ func TestAnalyzeMatrix(t *testing.T) {
 		{
 			name:          "codex target",
 			target:        domain.ToolCodex,
-			generated:     "AGENTS.sessionport.md",
+			generated:     "AGENTS.work-bridge.md",
 			targetWarning: "Codex export will provide config hints only; vendor-native session resume state is not reconstructed.",
 		},
 		{
 			name:          "gemini target",
 			target:        domain.ToolGemini,
-			generated:     "GEMINI.sessionport.md",
+			generated:     "GEMINI.work-bridge.md",
 			targetWarning: "Gemini export will emit a settings patch suggestion rather than replacing the full local profile.",
 		},
 		{
 			name:          "claude target",
 			target:        domain.ToolClaude,
-			generated:     "CLAUDE.sessionport.md",
+			generated:     "CLAUDE.work-bridge.md",
 			targetWarning: "Claude export will convert portable context into CLAUDE.md supplements and plain memory notes.",
 		},
 	}
@@ -90,7 +90,7 @@ func TestRenderText(t *testing.T) {
 		PartialFields:      []string{"settings_snapshot"},
 		UnsupportedFields:  []string{"hidden_reasoning"},
 		RedactedFields:     []string{"settings.auth_token"},
-		GeneratedArtifacts: []string{"CLAUDE.sessionport.md"},
+		GeneratedArtifacts: []string{"CLAUDE.work-bridge.md"},
 		Warnings:           []string{"history-based import"},
 	}
 

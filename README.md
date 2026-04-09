@@ -1,106 +1,122 @@
-# sessionport
+# work-bridge
 
-Local-first CLI for importing coding-agent sessions, normalizing them into a portable working-state bundle, and rehydrating them for Claude Code, Gemini CLI, and Codex CLI.
+`work-bridge` is a local-first bridge for coding-agent workflows.
 
-`sessionport` is now TUI-first. The session portability engine still exists underneath, but the default entrypoint opens the Bubble Tea workspace directly.
+It does two jobs:
 
-The CLI scaffold uses `cobra` for command routing and `viper` for config/env wiring so the command surface can grow without rebuilding flag parsing by hand.
+- inspect local sessions, skills, and MCP configs across supported tools
+- export portable session artifacts so work can continue in another tool
 
-## Current state
+The default entrypoint is a Bubble Tea TUI. Legacy CLI commands remain available for automation and tests.
 
-This repository now has a working session portability core. The following commands are live today:
+## Supported Tools
 
-- The TUI opens by default when you run `sessionport`.
-- Legacy compatibility commands remain available but hidden for automation and tests.
-- Supported tool adapters cover `codex`, `gemini`, `claude`, and `opencode`.
+- `codex`
+- `claude`
+- `gemini`
+- `opencode`
 
-Global flags already scaffolded:
+## Current TUI Scope
 
-- `--config`
-- `--format`
-- `--verbose`
+- `Sessions`: inspect, import, doctor, export
+- `Projects`: index project roots from configured workspace roots
+- `Skills`: inspect and install into the current project
+- `MCP`: inspect known config locations and run runtime stdio validation
+- `Logs`: recent workspace actions and errors
 
-## Quickstart
+Mouse support currently covers:
+
+- pane focus
+- list selection
+- preview tab switching
+- wheel scrolling for lists and previews
+
+MCP validation now performs a real stdio handshake for command-based servers. `work-bridge` sends `initialize`, follows with `notifications/initialized`, and counts advertised `resources`, `resourceTemplates`, `tools`, and `prompts` where available.
+
+HTTP/SSE MCP transports are not probed yet.
+
+## Build
+
+```bash
+make build
+./bin/work-bridge
+```
+
+## Test
 
 ```bash
 make test
-make build
-./bin/sessionport --help
-./bin/sessionport detect
-./bin/sessionport --format json detect
-./bin/sessionport inspect codex --limit 5
-./bin/sessionport --format json inspect gemini --limit 5
-./bin/sessionport import --from codex --session latest
-./bin/sessionport import --from gemini --session latest --out ./out/gemini-bundle.json
-./bin/sessionport import --from claude --session latest
-./bin/sessionport doctor --from codex --session latest --target claude
-./bin/sessionport --format json doctor --from gemini --session latest --target codex
-./bin/sessionport export --bundle ./out/gemini-bundle.json --target claude --out ./rehydrated
-./bin/sessionport pack --from codex --session latest --out ./bundle.spkg
-./bin/sessionport unpack --file ./bundle.spkg --target gemini --out ./rehydrated-from-spkg
+go test ./...
 ```
 
-## Layout
+## CLI Examples
 
-```text
-cmd/sessionport/        CLI entrypoint
-internal/cli/          cobra/viper wiring, command routing, exit codes
-internal/domain/       canonical bundle types
-internal/platform/     filesystem, env, clock, archive, redaction abstractions
-testdata/fixtures/     vendor fixture inputs for parser tests
-testdata/golden/       expected outputs for golden tests
-docs/                  implementation and testing docs
+```bash
+./bin/work-bridge detect
+./bin/work-bridge inspect codex --limit 5
+./bin/work-bridge import --from codex --session latest
+./bin/work-bridge doctor --from codex --session latest --target claude
+./bin/work-bridge export --bundle ./bundle.json --target gemini --out ./out
 ```
-
-## Next implementation slice
-
-1. Expand fixture coverage for degraded/import-fidelity cases and keep doctor/export consistency locked.
-2. Continue enriching session import signals such as touched files, decisions, failures, and Claude transcript augmentation.
-3. Stabilize config-driven path overrides, output defaults, and redaction policy handling.
-4. Treat skill/workspace portability and Bubble Tea surfaces as first-class consumers of the session engine.
 
 ## Config
 
-Configuration precedence is:
+Configuration precedence:
 
 1. CLI flags
 2. environment variables
-3. an explicit config passed with `--config`
-4. a discovered config from the current directory, then home directory
+3. `--config`
+4. discovered config in the current directory, then home directory
 5. built-in defaults
 
-Supported config categories now include:
+Supported config files:
 
-- default output and display settings: `format`, `verbose`
-- per-tool root overrides: `paths.codex`, `paths.gemini`, `paths.claude`
-- output defaults: `output.import_bundle_path`, `output.export_dir`, `output.package_path`, `output.unpack_dir`
-- redaction policy: `redaction.additional_sensitive_keys`, `redaction.detect_sensitive_values`
+- `.work-bridge.yaml`
+- `.work-bridge.yml`
+- `.work-bridge.toml`
+- `.work-bridge.json`
 
-Values can come from:
+Environment variables use the `WORK_BRIDGE_` prefix.
 
-- CLI flags
-- environment variables such as `SESSIONPORT_FORMAT` and `SESSIONPORT_VERBOSE`
-- a config file passed via `--config`
-- default config files discovered from the current directory, then home directory:
-  - `.sessionport.yaml`
-  - `.sessionport.yml`
-  - `.sessionport.toml`
-  - `.sessionport.json`
+Useful config keys:
+
+- `workspace_roots`
+- `paths.codex`
+- `paths.gemini`
+- `paths.claude`
+- `paths.opencode`
+- `output.export_dir`
 
 Example:
 
 ```json
 {
   "format": "json",
+  "workspace_roots": [
+    "~/Projects",
+    "~/work"
+  ],
   "paths": {
     "codex": "/Users/me/.local/share/codex"
   },
   "output": {
-    "export_dir": "./out/sessionport"
-  },
-  "redaction": {
-    "additional_sensitive_keys": ["workspace_secret"],
-    "detect_sensitive_values": true
+    "export_dir": "./out/work-bridge"
   }
 }
 ```
+
+## Repository Layout
+
+```text
+cmd/work-bridge/      CLI entrypoint
+internal/cli/         command wiring and TUI backend adapters
+internal/tui/         Bubble Tea workspace
+internal/domain/      portable bundle types
+internal/importer/    tool-specific session importers
+internal/exporter/    target-specific artifact generation
+testdata/             fixtures and golden outputs
+```
+
+## Contributing
+
+See `CONTRIBUTING.md`.

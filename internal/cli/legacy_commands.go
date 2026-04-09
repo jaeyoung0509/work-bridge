@@ -106,7 +106,7 @@ func (a *App) newVersionCommand() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "sessionport %s\n", Version)
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "work-bridge %s\n", Version)
 			return err
 		},
 	}

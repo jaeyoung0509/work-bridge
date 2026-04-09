@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"sessionport/internal/doctor"
-	"sessionport/internal/domain"
-	"sessionport/internal/importer"
-	"sessionport/internal/platform/fsx"
-	"sessionport/internal/testutil"
+	"github.com/jaeyoung0509/work-bridge/internal/doctor"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/importer"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/testutil"
 )
 
 func TestExportWritesManifestAndFiles(t *testing.T) {
@@ -35,7 +35,7 @@ func TestExportWritesManifestAndFiles(t *testing.T) {
 		PartialFields:      []string{"settings_snapshot"},
 		UnsupportedFields:  []string{"hidden_reasoning"},
 		RedactedFields:     []string{"settings.auth_token"},
-		GeneratedArtifacts: []string{"AGENTS.sessionport.md", "CONFIG_HINTS.md", "STARTER_PROMPT.md"},
+		GeneratedArtifacts: []string{"AGENTS.work-bridge.md", "CONFIG_HINTS.md", "STARTER_PROMPT.md"},
 		Warnings:           []string{"config is partial"},
 	}
 
@@ -53,11 +53,11 @@ func TestExportWritesManifestAndFiles(t *testing.T) {
 		t.Fatalf("expected 4 files in manifest, got %#v", manifest.Files)
 	}
 
-	data, err := (fsx.OSFS{}).ReadFile(outDir + "/AGENTS.sessionport.md")
+	data, err := (fsx.OSFS{}).ReadFile(outDir + "/AGENTS.work-bridge.md")
 	if err != nil {
 		t.Fatalf("read exported supplement failed: %v", err)
 	}
-	if !strings.Contains(string(data), "sessionport Codex supplement") {
+	if !strings.Contains(string(data), "work-bridge Codex supplement") {
 		t.Fatalf("expected codex supplement, got %q", string(data))
 	}
 }

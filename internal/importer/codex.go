@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"sessionport/internal/domain"
-	"sessionport/internal/inspect"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/inspect"
 )
 
 func importCodex(opts Options) (RawImportResult, error) {

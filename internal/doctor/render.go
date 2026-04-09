@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"sessionport/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
 )
 
 func RenderText(report domain.CompatibilityReport) string {

@@ -1,12 +1,13 @@
 package catalog
 
 import (
+	"io/fs"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"sessionport/internal/domain"
-	"sessionport/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 )
 
 type SkillEntry struct {
@@ -22,6 +23,13 @@ type MCPEntry struct {
 	Source  string `json:"source"`
 	Status  string `json:"status"`
 	Details string `json:"details"`
+}
+
+type ProjectEntry struct {
+	Name          string   `json:"name"`
+	Root          string   `json:"root"`
+	WorkspaceRoot string   `json:"workspace_root"`
+	Markers       []string `json:"markers"`
 }
 
 func ScanSkills(fs fsx.FS, cwd, homeDir string) ([]SkillEntry, error) {
@@ -59,16 +67,27 @@ func ScanSkills(fs fsx.FS, cwd, homeDir string) ([]SkillEntry, error) {
 }
 
 func ScanMCP(fs fsx.FS, cwd, homeDir string, paths domain.ToolPaths) ([]MCPEntry, error) {
-	candidates := []MCPEntry{
-		{Name: "project opencode config", Path: filepath.Join(cwd, ".opencode", "opencode.jsonc"), Source: "project"},
-		{Name: "project opencode config", Path: filepath.Join(cwd, ".opencode", "opencode.json"), Source: "project"},
-		{Name: "global opencode config", Path: filepath.Join(homeDir, ".config", "opencode", "opencode.jsonc"), Source: "user"},
-		{Name: "global opencode config", Path: filepath.Join(homeDir, ".config", "opencode", "opencode.json"), Source: "user"},
-		{Name: "legacy opencode config", Path: filepath.Join(homeDir, ".local", "share", "opencode", "opencode.jsonc"), Source: "legacy"},
-		{Name: "claude settings", Path: filepath.Join(paths.Dir(domain.ToolClaude, homeDir), "settings.json"), Source: "user"},
-		{Name: "gemini settings", Path: filepath.Join(paths.Dir(domain.ToolGemini, homeDir), "settings.json"), Source: "user"},
-		{Name: "codex config", Path: filepath.Join(paths.Dir(domain.ToolCodex, homeDir), "config.toml"), Source: "user"},
+	projectRoot := nearestProjectRoot(fs, cwd)
+	candidates := []MCPEntry{}
+	addCandidate := func(name string, path string, source string) {
+		if path == "" {
+			return
+		}
+		candidates = append(candidates, MCPEntry{Name: name, Path: filepath.Clean(path), Source: source})
 	}
+
+	addCandidate("project claude settings", filepath.Join(projectRoot, ".claude", "settings.json"), "project")
+	addCandidate("project claude local settings", filepath.Join(projectRoot, ".claude", "settings.local.json"), "local")
+	addCandidate("project gemini settings", filepath.Join(projectRoot, ".gemini", "settings.json"), "project")
+	addCandidate("project opencode config", filepath.Join(projectRoot, ".opencode", "opencode.jsonc"), "project")
+	addCandidate("project opencode config", filepath.Join(projectRoot, ".opencode", "opencode.json"), "project")
+	addCandidate("global codex config", filepath.Join(paths.Dir(domain.ToolCodex, homeDir), "config.toml"), "user")
+	addCandidate("global claude settings", filepath.Join(paths.Dir(domain.ToolClaude, homeDir), "settings.json"), "user")
+	addCandidate("global gemini settings", filepath.Join(paths.Dir(domain.ToolGemini, homeDir), "settings.json"), "user")
+	addCandidate("global opencode config", filepath.Join(homeDir, ".config", "opencode", "opencode.jsonc"), "user")
+	addCandidate("global opencode config", filepath.Join(homeDir, ".config", "opencode", "opencode.json"), "user")
+	addCandidate("legacy opencode config", filepath.Join(homeDir, ".local", "share", "opencode", "opencode.jsonc"), "legacy")
+	addCandidate("legacy opencode config", filepath.Join(homeDir, ".local", "share", "opencode", "opencode.json"), "legacy")
 
 	entries := make([]MCPEntry, 0, len(candidates))
 	for _, item := range candidates {
@@ -84,6 +103,24 @@ func ScanMCP(fs fsx.FS, cwd, homeDir string, paths domain.ToolPaths) ([]MCPEntry
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Name == entries[j].Name {
 			return entries[i].Path < entries[j].Path
+		}
+		return entries[i].Name < entries[j].Name
+	})
+	return entries, nil
+}
+
+func ScanProjects(fs fsx.FS, roots []string) ([]ProjectEntry, error) {
+	normalized := normalizeProjectRoots(fs, roots)
+	entries := []ProjectEntry{}
+	seen := map[string]struct{}{}
+	for _, root := range normalized {
+		if err := walkProjects(fs, root, root, 0, seen, &entries); err != nil {
+			return nil, err
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Name == entries[j].Name {
+			return entries[i].Root < entries[j].Root
 		}
 		return entries[i].Name < entries[j].Name
 	})
@@ -194,6 +231,135 @@ func relativeSource(root, path string) string {
 		return "project"
 	}
 	return rel
+}
+
+func normalizeProjectRoots(fs fsx.FS, roots []string) []string {
+	out := make([]string, 0, len(roots))
+	seen := map[string]struct{}{}
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		if root == "" {
+			continue
+		}
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		info, err := fs.Stat(root)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		seen[root] = struct{}{}
+		out = append(out, root)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func walkProjects(fs fsx.FS, dir string, workspaceRoot string, depth int, seen map[string]struct{}, out *[]ProjectEntry) error {
+	if depth > 5 {
+		return nil
+	}
+
+	entries, err := fs.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+
+	markers := projectMarkers(fs, dir, entries)
+	if len(markers) > 0 {
+		root := filepath.Clean(dir)
+		if _, ok := seen[root]; !ok {
+			seen[root] = struct{}{}
+			*out = append(*out, ProjectEntry{
+				Name:          filepath.Base(root),
+				Root:          root,
+				WorkspaceRoot: filepath.Clean(workspaceRoot),
+				Markers:       markers,
+			})
+		}
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if shouldSkipProjectWalkDir(entry.Name()) {
+			continue
+		}
+		if err := walkProjects(fs, filepath.Join(dir, entry.Name()), workspaceRoot, depth+1, seen, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func projectMarkers(fs fsx.FS, dir string, entries []fs.DirEntry) []string {
+	markers := []string{}
+	for _, entry := range entries {
+		name := entry.Name()
+		switch {
+		case entry.IsDir() && name == ".git":
+			markers = append(markers, "git")
+		case !entry.IsDir() && name == "AGENTS.md":
+			markers = append(markers, "codex")
+		case !entry.IsDir() && name == "GEMINI.md":
+			markers = append(markers, "gemini")
+		case !entry.IsDir() && name == "CLAUDE.md":
+			markers = append(markers, "claude")
+		case entry.IsDir() && name == ".claude":
+			markers = append(markers, "claude")
+		case entry.IsDir() && name == ".gemini":
+			markers = append(markers, "gemini")
+		case entry.IsDir() && name == ".opencode":
+			markers = append(markers, "opencode")
+		case entry.IsDir() && name == "skills":
+			markers = append(markers, "skills")
+		}
+	}
+	if info, err := fs.Stat(filepath.Join(dir, ".github", "skills")); err == nil && info.IsDir() {
+		markers = append(markers, "skills")
+	}
+	sort.Strings(markers)
+	return dedupeStrings(markers)
+}
+
+func shouldSkipProjectWalkDir(name string) bool {
+	switch name {
+	case ".git", ".hg", ".svn", ".jj", "node_modules", "vendor", "dist", "build", "target", ".next", ".turbo", ".cache":
+		return true
+	default:
+		return strings.HasPrefix(name, ".work-bridge")
+	}
+}
+
+func nearestProjectRoot(fs fsx.FS, cwd string) string {
+	current := filepath.Clean(cwd)
+	for {
+		if info, err := fs.Stat(filepath.Join(current, ".git")); err == nil && info.IsDir() {
+			return current
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return filepath.Clean(cwd)
+		}
+		current = parent
+	}
+}
+
+func dedupeStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func firstParagraph(content string) string {

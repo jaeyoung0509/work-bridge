@@ -61,7 +61,7 @@ func AssertGoldenJSON(t *testing.T, goldenPath string, got any) {
 	}
 	data = append(data, '\n')
 
-	if os.Getenv("SESSIONPORT_UPDATE_GOLDEN") == "1" {
+	if os.Getenv("WORK_BRIDGE_UPDATE_GOLDEN") == "1" {
 		if err := os.MkdirAll(filepath.Dir(goldenPath), 0o755); err != nil {
 			t.Fatalf("mkdir golden dir failed: %v", err)
 		}

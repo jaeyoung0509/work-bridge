@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"sessionport/internal/capability"
-	"sessionport/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/capability"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
 )
 
 type Options struct {

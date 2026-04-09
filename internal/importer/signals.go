@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"sessionport/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
 )
 
 var (

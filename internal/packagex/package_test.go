@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"sessionport/internal/domain"
-	"sessionport/internal/platform/archivex"
-	"sessionport/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/archivex"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 )
 
 func TestPackAndUnpackRoundTrip(t *testing.T) {
