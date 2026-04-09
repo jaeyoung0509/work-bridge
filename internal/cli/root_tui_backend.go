@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -87,6 +89,7 @@ func (a *App) loadWorkspaceSnapshot(ctx context.Context) (tui.WorkspaceSnapshot,
 	}
 
 	snapshot := tui.WorkspaceSnapshot{
+		HomeDir:       homeDir,
 		InspectByTool: map[domain.Tool]inspect.Report{},
 		Projects:      []tui.ProjectEntry{},
 		Skills:        []tui.SkillEntry{},
@@ -141,12 +144,15 @@ func (a *App) loadWorkspaceSnapshot(ctx context.Context) (tui.WorkspaceSnapshot,
 				Description: entry.Description,
 				Path:        entry.Path,
 				Source:      entry.Source,
+				Scope:       entry.Scope,
+				Tool:        domain.Tool(entry.Tool),
 			}
 			if data, readErr := a.fs.ReadFile(entry.Path); readErr == nil {
 				skill.Content = string(data)
 			}
 			skills = append(skills, skill)
 		}
+		skills = enrichSkillEntries(skills)
 		mu.Lock()
 		snapshot.Skills = skills
 		mu.Unlock()
@@ -275,6 +281,7 @@ func enrichProjectEntries(entries []catalog.ProjectEntry, snapshot tui.Workspace
 			Root:          entry.Root,
 			WorkspaceRoot: entry.WorkspaceRoot,
 			Markers:       append([]string{}, entry.Markers...),
+			SessionByTool: map[string]int{},
 		})
 	}
 
@@ -283,6 +290,7 @@ func enrichProjectEntries(entries []catalog.ProjectEntry, snapshot tui.Workspace
 			projectPath := firstNonEmpty(session.ProjectRoot, session.StoragePath)
 			if idx := projectIndexForPath(projects, projectPath); idx >= 0 {
 				projects[idx].SessionCount++
+				projects[idx].SessionByTool[string(report.Tool)]++
 			}
 		}
 	}
@@ -345,6 +353,114 @@ func summarizeWorkspaceHealth(snapshot tui.WorkspaceSnapshot) tui.WorkspaceHealt
 		}
 	}
 	return health
+}
+
+func enrichSkillEntries(skills []tui.SkillEntry) []tui.SkillEntry {
+	grouped := map[string][]int{}
+	for i := range skills {
+		skills[i].GroupKey = normalizedSkillGroup(skills[i].Name)
+		skills[i].ContentHash = hashSkillContent(skills[i].Content)
+		grouped[skills[i].GroupKey] = append(grouped[skills[i].GroupKey], i)
+	}
+
+	for _, indexes := range grouped {
+		variants := make([]tui.SkillVariant, 0, len(indexes))
+		hasProject := false
+		hasExternal := false
+		hashes := map[string]struct{}{}
+		for _, idx := range indexes {
+			entry := skills[idx]
+			if entry.Scope == "project" {
+				hasProject = true
+			} else {
+				hasExternal = true
+			}
+			if entry.ContentHash != "" {
+				hashes[entry.ContentHash] = struct{}{}
+			}
+			variants = append(variants, tui.SkillVariant{
+				Path:   entry.Path,
+				Scope:  entry.Scope,
+				Tool:   entry.Tool,
+				Source: entry.Source,
+			})
+		}
+		sort.SliceStable(variants, func(i, j int) bool {
+			if variants[i].Scope == variants[j].Scope {
+				if variants[i].Tool == variants[j].Tool {
+					return variants[i].Path < variants[j].Path
+				}
+				return variants[i].Tool < variants[j].Tool
+			}
+			return skillScopeRank(variants[i].Scope) < skillScopeRank(variants[j].Scope)
+		})
+
+		conflict := "only-in-user/global"
+		switch {
+		case hasProject && !hasExternal:
+			conflict = "only-in-project"
+		case hasProject && hasExternal && len(hashes) <= 1:
+			conflict = "both-present"
+		case hasProject && hasExternal:
+			conflict = "content-diverged"
+		}
+
+		for _, idx := range indexes {
+			skills[idx].VariantCount = len(indexes)
+			skills[idx].ConflictState = conflict
+			skills[idx].Variants = append([]tui.SkillVariant{}, variants...)
+		}
+	}
+
+	sort.SliceStable(skills, func(i, j int) bool {
+		if strings.EqualFold(skills[i].Name, skills[j].Name) {
+			if skillScopeRank(skills[i].Scope) == skillScopeRank(skills[j].Scope) {
+				if skills[i].Tool == skills[j].Tool {
+					return skills[i].Path < skills[j].Path
+				}
+				return skills[i].Tool < skills[j].Tool
+			}
+			return skillScopeRank(skills[i].Scope) < skillScopeRank(skills[j].Scope)
+		}
+		return strings.ToLower(skills[i].Name) < strings.ToLower(skills[j].Name)
+	})
+	return skills
+}
+
+func normalizedSkillGroup(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if name == "" {
+		return "skill"
+	}
+	fields := strings.FieldsFunc(name, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	})
+	if len(fields) == 0 {
+		return "skill"
+	}
+	return strings.Join(fields, "-")
+}
+
+func hashSkillContent(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:8])
+}
+
+func skillScopeRank(scope string) int {
+	switch scope {
+	case "project":
+		return 0
+	case "user":
+		return 1
+	case "global":
+		return 2
+	default:
+		return 3
+	}
 }
 
 func summarizeMCPConfig(path string, data []byte) mcpConfigSummary {
@@ -1099,30 +1215,24 @@ func toolBinary(tool domain.Tool) string {
 	}
 }
 
-func (a *App) installSkillFromTUI(ctx context.Context, entry tui.SkillEntry) (tui.SkillInstallResult, error) {
+func (a *App) installSkillFromTUI(ctx context.Context, entry tui.SkillEntry, target tui.SkillTarget) (tui.SkillInstallResult, error) {
 	_ = ctx
 
-	cwd, _, err := a.resolveWorkingDirs()
-	if err != nil {
-		return tui.SkillInstallResult{}, err
-	}
-
 	srcDir := filepath.Dir(entry.Path)
-	targetName := filepath.Base(srcDir)
-	if targetName == "" || targetName == "." || targetName == string(filepath.Separator) {
-		targetName = sanitizeSkillName(entry.Name)
+	targetPath := filepath.Clean(target.Path)
+	if strings.TrimSpace(targetPath) == "" {
+		return tui.SkillInstallResult{}, fmt.Errorf("skill target path is required")
 	}
-	if targetName == "" {
-		targetName = "skill"
-	}
-
-	targetDir := filepath.Join(cwd, "skills", targetName)
+	targetDir := filepath.Dir(targetPath)
 	result := tui.SkillInstallResult{
-		InstalledPath: filepath.Join(targetDir, "SKILL.md"),
+		InstalledPath: targetPath,
+		TargetID:      target.ID,
+		TargetLabel:   target.Label,
+		TargetScope:   target.Scope,
 	}
 
 	if filepath.Clean(srcDir) == filepath.Clean(targetDir) {
-		result.Warnings = append(result.Warnings, "skill is already project-local")
+		result.Warnings = append(result.Warnings, "skill is already at the selected target")
 		return result, nil
 	}
 

@@ -29,13 +29,14 @@ type Backend struct {
 	ImportSession         func(context.Context, domain.Tool, string) (domain.SessionBundle, error)
 	DoctorBundle          func(context.Context, domain.SessionBundle, domain.Tool) (domain.CompatibilityReport, error)
 	ExportBundle          func(context.Context, domain.SessionBundle, domain.Tool, string) (domain.ExportManifest, error)
-	InstallSkill          func(context.Context, SkillEntry) (SkillInstallResult, error)
+	InstallSkill          func(context.Context, SkillEntry, SkillTarget) (SkillInstallResult, error)
 	ProbeMCP              func(context.Context, MCPEntry) (MCPProbeResult, error)
 	DefaultExportDir      string
 }
 
 type WorkspaceSnapshot struct {
 	Detect        detect.Report                  `json:"detect"`
+	HomeDir       string                         `json:"home_dir,omitempty"`
 	InspectByTool map[domain.Tool]inspect.Report `json:"inspect_by_tool"`
 	Projects      []ProjectEntry                 `json:"projects"`
 	Skills        []SkillEntry                   `json:"skills"`
@@ -53,21 +54,46 @@ type WorkspaceHealthSummary struct {
 }
 
 type ProjectEntry struct {
-	Name          string   `json:"name"`
-	Root          string   `json:"root"`
-	WorkspaceRoot string   `json:"workspace_root"`
-	Markers       []string `json:"markers,omitempty"`
-	SessionCount  int      `json:"session_count,omitempty"`
-	SkillCount    int      `json:"skill_count,omitempty"`
-	MCPCount      int      `json:"mcp_count,omitempty"`
+	Name          string         `json:"name"`
+	Root          string         `json:"root"`
+	WorkspaceRoot string         `json:"workspace_root"`
+	Markers       []string       `json:"markers,omitempty"`
+	SessionCount  int            `json:"session_count,omitempty"`
+	SkillCount    int            `json:"skill_count,omitempty"`
+	MCPCount      int            `json:"mcp_count,omitempty"`
+	SessionByTool map[string]int `json:"session_by_tool,omitempty"`
 }
 
 type SkillEntry struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Path        string `json:"path"`
-	Source      string `json:"source"`
-	Content     string `json:"content,omitempty"`
+	Name          string         `json:"name"`
+	Description   string         `json:"description"`
+	Path          string         `json:"path"`
+	Source        string         `json:"source"`
+	Scope         string         `json:"scope,omitempty"`
+	Tool          domain.Tool    `json:"tool,omitempty"`
+	GroupKey      string         `json:"group_key,omitempty"`
+	ConflictState string         `json:"conflict_state,omitempty"`
+	VariantCount  int            `json:"variant_count,omitempty"`
+	ContentHash   string         `json:"content_hash,omitempty"`
+	Content       string         `json:"content,omitempty"`
+	Variants      []SkillVariant `json:"variants,omitempty"`
+}
+
+type SkillVariant struct {
+	Path   string      `json:"path"`
+	Scope  string      `json:"scope,omitempty"`
+	Tool   domain.Tool `json:"tool,omitempty"`
+	Source string      `json:"source,omitempty"`
+}
+
+type SkillTarget struct {
+	ID         string      `json:"id"`
+	Label      string      `json:"label"`
+	Scope      string      `json:"scope"`
+	Tool       domain.Tool `json:"tool,omitempty"`
+	Path       string      `json:"path"`
+	Exists     bool        `json:"exists,omitempty"`
+	SameSource bool        `json:"same_source,omitempty"`
 }
 
 type MCPEntry struct {
@@ -100,6 +126,9 @@ type MCPServerConfig struct {
 
 type SkillInstallResult struct {
 	InstalledPath string   `json:"installed_path"`
+	TargetID      string   `json:"target_id,omitempty"`
+	TargetLabel   string   `json:"target_label,omitempty"`
+	TargetScope   string   `json:"target_scope,omitempty"`
 	Overwrote     bool     `json:"overwrote"`
 	Warnings      []string `json:"warnings,omitempty"`
 }
@@ -308,11 +337,14 @@ type Model struct {
 	task     taskState
 	lastErr  error
 
-	bundleBySession map[string]domain.SessionBundle
-	doctorByKey     map[string]domain.CompatibilityReport
-	exportByKey     map[string]domain.ExportManifest
-	installByPath   map[string]SkillInstallResult
-	probeByPath     map[string]MCPProbeResult
+	activeProjectRoot string
+
+	bundleBySession   map[string]domain.SessionBundle
+	doctorByKey       map[string]domain.CompatibilityReport
+	exportByKey       map[string]domain.ExportManifest
+	installByPath     map[string]SkillInstallResult
+	probeByPath       map[string]MCPProbeResult
+	skillTargetByPath map[string]string
 
 	logs []string
 }
@@ -340,16 +372,17 @@ func NewModel(ctx context.Context, backend Backend) Model {
 		ctx = context.Background()
 	}
 	return Model{
-		backend:         backend,
-		ctx:             ctx,
-		activeSection:   sectionSessions,
-		focus:           focusList,
-		bundleBySession: map[string]domain.SessionBundle{},
-		doctorByKey:     map[string]domain.CompatibilityReport{},
-		exportByKey:     map[string]domain.ExportManifest{},
-		installByPath:   map[string]SkillInstallResult{},
-		probeByPath:     map[string]MCPProbeResult{},
-		logs:            []string{"workspace boot requested"},
+		backend:           backend,
+		ctx:               ctx,
+		activeSection:     sectionSessions,
+		focus:             focusList,
+		bundleBySession:   map[string]domain.SessionBundle{},
+		doctorByKey:       map[string]domain.CompatibilityReport{},
+		exportByKey:       map[string]domain.ExportManifest{},
+		installByPath:     map[string]SkillInstallResult{},
+		probeByPath:       map[string]MCPProbeResult{},
+		skillTargetByPath: map[string]string{},
+		logs:              []string{"workspace boot requested"},
 	}
 }
 
@@ -379,6 +412,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouseWheel(msg)
 	case snapshotLoadedMsg:
 		m.snapshot = msg.snapshot
+		m.reconcileActiveProject()
 		m.task = taskState{}
 		m.lastErr = nil
 		m.logs = append(m.logs, fmt.Sprintf("workspace loaded: %d sessions, %d skills, %d mcp", m.snapshot.HealthSummary.SessionCount, m.snapshot.HealthSummary.SkillCount, m.snapshot.HealthSummary.MCPCount))
@@ -420,7 +454,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.installByPath[msg.skill.Path] = msg.result
 		m.task = taskState{kind: "load", label: "Refreshing workspace"}
 		m.lastErr = nil
-		m.logs = append(m.logs, fmt.Sprintf("installed skill %s -> %s", msg.skill.Name, shortPath(msg.result.InstalledPath)))
+		m.logs = append(m.logs, fmt.Sprintf("synced skill %s -> %s", msg.skill.Name, shortPath(msg.result.InstalledPath)))
 		return m, tea.Batch(m.loadWorkspaceCmd(), tickCmd())
 	case mcpProbedMsg:
 		m.probeByPath[msg.entry.Path] = msg.result
@@ -504,6 +538,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.searchQuery = ""
 			m.ensureValidSelection()
 			m.ensureVisibleSelection()
+			return m, nil
+		}
+		if m.activeProjectRoot != "" {
+			m.clearActiveProject()
+		}
+		return m, nil
+	case "c":
+		if m.activeProjectRoot != "" {
+			m.clearActiveProject()
 		}
 		return m, nil
 	case "tab":
@@ -516,9 +559,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.task = taskState{kind: "load", label: "Refreshing workspace"}
 		return m, tea.Batch(m.loadWorkspaceCmd(), tickCmd())
 	case "t":
+		if m.activeSection == sectionSkills {
+			m.moveSkillTarget(1)
+			return m, nil
+		}
 		m.targetIdx = (m.targetIdx + 1) % len(toolOrder)
 		return m, nil
 	case "T":
+		if m.activeSection == sectionSkills {
+			m.moveSkillTarget(-1)
+			return m, nil
+		}
 		m.targetIdx = (m.targetIdx + len(toolOrder) - 1) % len(toolOrder)
 		return m, nil
 	case "[":
@@ -584,7 +635,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "I":
 		if m.activeSection == sectionSkills {
 			if _, ok := m.selectedSkill(); ok {
-				m.task = taskState{kind: "skill-install", label: "Installing skill"}
+				m.task = taskState{kind: "skill-sync", label: "Syncing skill"}
 				return m, tea.Batch(m.installSelectedSkillCmd(), tickCmd())
 			}
 		}
@@ -711,6 +762,18 @@ func (m Model) renderHeader() string {
 	if m.searchQuery != "" {
 		pills = append(pills, badgeStyle("search "+m.searchQuery, "muted"))
 	}
+	scopeLabel := "scope all-projects"
+	if item, ok := m.activeProject(); ok {
+		scopeLabel = "scope " + firstNonEmpty(item.Name, shortPath(item.Root))
+	}
+	pills = append(pills, badgeStyle(scopeLabel, "muted"))
+	if m.activeSection == sectionSkills {
+		if item, ok := m.selectedSkill(); ok {
+			if target, ok := m.selectedSkillTarget(item); ok {
+				pills = append(pills, badgeStyle("copy "+target.Label, "warning"))
+			}
+		}
+	}
 	if m.task.kind != "" {
 		pills = append(pills, badgeStyle(m.spinnerFrame()+" "+m.task.label, "success"))
 	}
@@ -758,11 +821,16 @@ func (m Model) renderBody() string {
 }
 
 func (m Model) renderStatusBar() string {
+	scope := "all projects"
+	if item, ok := m.activeProject(); ok {
+		scope = firstNonEmpty(item.Name, shortPath(item.Root))
+	}
 	left := []string{
-		fmt.Sprintf("%d sessions", m.snapshot.HealthSummary.SessionCount),
+		fmt.Sprintf("%d sessions", len(m.filteredSessions())),
 		fmt.Sprintf("%d projects", len(m.filteredProjects())),
 		fmt.Sprintf("%d skills", len(m.filteredSkills())),
 		fmt.Sprintf("%d mcp", len(m.filteredMCP())),
+		"scope: " + scope,
 	}
 	if m.searchMode {
 		left = append(left, "search typing...")
@@ -782,14 +850,15 @@ func (m Model) renderHelp() string {
 		"j/k or up/down   move selection",
 		"/                filter current section",
 		"[ / ]            switch preview tab",
-		"t / T            cycle export target",
+		"t / T            cycle target",
 		"r                refresh workspace",
 		"mouse click      focus pane / choose item / switch tab",
 		"mouse wheel      scroll list selection or preview content",
+		"c                clear active project scope",
 		"i                import session",
 		"d                doctor selected session",
 		"e                export selected session",
-		"I                install selected skill",
+		"I                sync selected skill",
 		"p                validate selected mcp config",
 		"? or esc         close help",
 		"q                quit",
@@ -1114,6 +1183,7 @@ func (m Model) renderSkillPreview() string {
 		return "Select a skill."
 	}
 	install, hasInstall := m.installByPath[item.Path]
+	target, hasTarget := m.selectedSkillTarget(item)
 	switch m.currentPreviewTab() {
 	case previewContent:
 		if strings.TrimSpace(item.Content) == "" {
@@ -1123,13 +1193,40 @@ func (m Model) renderSkillPreview() string {
 	default:
 		lines := []string{
 			fmt.Sprintf("Name: %s", item.Name),
+			fmt.Sprintf("Scope: %s", firstNonEmpty(item.Scope, "project")),
+			fmt.Sprintf("Tool: %s", firstNonEmpty(string(item.Tool), "shared")),
 			fmt.Sprintf("Source: %s", item.Source),
 			fmt.Sprintf("Path: %s", shortPath(item.Path)),
+			fmt.Sprintf("Conflict: %s", firstNonEmpty(item.ConflictState, "none")),
+			fmt.Sprintf("Variants: %d", maxInt(1, item.VariantCount)),
 			fmt.Sprintf("Description: %s", firstNonEmpty(item.Description, "(none)")),
+		}
+		if hasTarget {
+			action := "create"
+			switch {
+			case target.SameSource:
+				action = "noop"
+			case target.Exists:
+				action = "overwrite"
+			}
+			lines = append(lines, "",
+				"Selected Target",
+				fmt.Sprintf("Label: %s", target.Label),
+				fmt.Sprintf("Scope: %s", target.Scope),
+				fmt.Sprintf("Path: %s", shortPath(target.Path)),
+				fmt.Sprintf("Action: %s", action),
+			)
+		}
+		if len(item.Variants) > 0 {
+			lines = append(lines, "", "Variants")
+			for _, variant := range item.Variants {
+				lines = append(lines, fmt.Sprintf("- %s | %s | %s", firstNonEmpty(variant.Scope, "project"), firstNonEmpty(string(variant.Tool), "shared"), shortPath(variant.Path)))
+			}
 		}
 		if hasInstall {
 			lines = append(lines, "",
-				"Last Install",
+				"Last Sync",
+				fmt.Sprintf("Target: %s", firstNonEmpty(install.TargetLabel, install.TargetScope)),
 				fmt.Sprintf("Installed path: %s", shortPath(install.InstalledPath)),
 				fmt.Sprintf("Overwrote: %t", install.Overwrote),
 			)
@@ -1146,13 +1243,26 @@ func (m Model) renderProjectPreview() string {
 	if !ok {
 		return "Select a project."
 	}
+	scopeState := "inactive"
+	if samePath(item.Root, m.activeProjectRoot) {
+		scopeState = "active"
+	}
 	lines := []string{
 		fmt.Sprintf("Name: %s", item.Name),
 		fmt.Sprintf("Root: %s", shortPath(item.Root)),
 		fmt.Sprintf("Workspace root: %s", shortPath(item.WorkspaceRoot)),
+		fmt.Sprintf("Scope: %s", scopeState),
 		fmt.Sprintf("Sessions: %d", item.SessionCount),
 		fmt.Sprintf("Skills: %d", item.SkillCount),
 		fmt.Sprintf("MCP configs: %d", item.MCPCount),
+	}
+	if len(item.SessionByTool) > 0 {
+		lines = append(lines, "", "Sessions by Tool")
+		for _, tool := range toolOrder {
+			if count := item.SessionByTool[string(tool)]; count > 0 {
+				lines = append(lines, fmt.Sprintf("- %s: %d", tool, count))
+			}
+		}
 	}
 	if len(item.Markers) > 0 {
 		lines = append(lines, "", "Markers")
@@ -1160,6 +1270,7 @@ func (m Model) renderProjectPreview() string {
 			lines = append(lines, "- "+marker)
 		}
 	}
+	lines = append(lines, "", "Controls", "- select in Projects to scope workspace", "- click active project again or press c to clear scope")
 	return strings.Join(lines, "\n")
 }
 
@@ -1401,8 +1512,12 @@ func (m Model) installSelectedSkillCmd() tea.Cmd {
 	if !ok {
 		return nil
 	}
+	target, ok := m.selectedSkillTarget(item)
+	if !ok {
+		return nil
+	}
 	return func() tea.Msg {
-		result, err := m.backend.InstallSkill(m.ctx, item)
+		result, err := m.backend.InstallSkill(m.ctx, item, target)
 		if err != nil {
 			return errorMsg{err: err}
 		}
@@ -1524,9 +1639,14 @@ func (m Model) filteredSessions() []sessionItem {
 			continue
 		}
 		for _, session := range report.Sessions {
-			if matchesQuery(m.searchQuery, string(tool), session.Title, session.ID, session.ProjectRoot, session.StoragePath) {
-				items = append(items, sessionItem{Tool: tool, Report: report, Session: session})
+			item := sessionItem{Tool: tool, Report: report, Session: session}
+			if !m.matchesActiveProjectSession(item) {
+				continue
 			}
+			if !matchesQuery(m.searchQuery, string(tool), session.Title, session.ID, session.ProjectRoot, session.StoragePath) {
+				continue
+			}
+			items = append(items, item)
 		}
 	}
 	return items
@@ -1551,15 +1671,28 @@ func (m Model) filteredProjects() []ProjectEntry {
 func (m Model) filteredSkills() []SkillEntry {
 	items := make([]SkillEntry, 0, len(m.snapshot.Skills))
 	for _, item := range m.snapshot.Skills {
-		if matchesQuery(m.searchQuery, item.Name, item.Description, item.Path, item.Source) {
-			items = append(items, item)
+		if !m.matchesActiveProjectSkill(item) {
+			continue
 		}
+		if !matchesQuery(m.searchQuery, item.Name, item.Description, item.Path, item.Source) {
+			continue
+		}
+		items = append(items, item)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].Name == items[j].Name {
+		if strings.EqualFold(items[i].Name, items[j].Name) {
+			if skillScopeRank(items[i].Scope) == skillScopeRank(items[j].Scope) {
+				if items[i].Tool == items[j].Tool {
+					return items[i].Path < items[j].Path
+				}
+				return items[i].Tool < items[j].Tool
+			}
+			return skillScopeRank(items[i].Scope) < skillScopeRank(items[j].Scope)
+		}
+		if items[i].GroupKey == items[j].GroupKey {
 			return items[i].Path < items[j].Path
 		}
-		return items[i].Name < items[j].Name
+		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
 	})
 	return items
 }
@@ -1567,9 +1700,13 @@ func (m Model) filteredSkills() []SkillEntry {
 func (m Model) filteredMCP() []MCPEntry {
 	items := make([]MCPEntry, 0, len(m.snapshot.MCPProfiles))
 	for _, item := range m.snapshot.MCPProfiles {
-		if matchesQuery(m.searchQuery, item.Name, item.Path, item.Source, item.Status, item.Details, string(item.Tool), strings.Join(item.ServerNames, " ")) {
-			items = append(items, item)
+		if !m.matchesActiveProjectPath(item.Path) {
+			continue
 		}
+		if !matchesQuery(m.searchQuery, item.Name, item.Path, item.Source, item.Status, item.Details, string(item.Tool), strings.Join(item.ServerNames, " ")) {
+			continue
+		}
+		items = append(items, item)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].Tool == items[j].Tool {
@@ -1617,6 +1754,18 @@ func (m Model) selectedProject() (ProjectEntry, bool) {
 	return items[clampIndex(m.projectIdx, len(items))], true
 }
 
+func (m Model) activeProject() (ProjectEntry, bool) {
+	if strings.TrimSpace(m.activeProjectRoot) == "" {
+		return ProjectEntry{}, false
+	}
+	for _, item := range m.snapshot.Projects {
+		if samePath(item.Root, m.activeProjectRoot) {
+			return item, true
+		}
+	}
+	return ProjectEntry{}, false
+}
+
 func (m Model) selectedMCP() (MCPEntry, bool) {
 	items := m.filteredMCP()
 	if len(items) == 0 {
@@ -1627,6 +1776,9 @@ func (m Model) selectedMCP() (MCPEntry, bool) {
 
 func (m Model) projectListItem(item ProjectEntry) listItem {
 	badges := []badge{}
+	if samePath(item.Root, m.activeProjectRoot) {
+		badges = append(badges, badge{label: "ACTIVE", tone: "accent"})
+	}
 	for _, marker := range item.Markers {
 		tone := "muted"
 		switch marker {
@@ -1673,10 +1825,33 @@ func (m Model) sessionListItem(item sessionItem) listItem {
 }
 
 func (m Model) skillListItem(item SkillEntry) listItem {
-	badges := []badge{{label: strings.ToUpper(sourceLabel(item.Source)), tone: "muted"}}
+	scopeTone := "muted"
+	switch item.Scope {
+	case "project":
+		scopeTone = "accent"
+	case "global":
+		scopeTone = "warning"
+	}
+	badges := []badge{{label: strings.ToUpper(firstNonEmpty(item.Scope, "project")), tone: scopeTone}}
+	if item.Tool != "" {
+		badges = append(badges, badge{label: strings.ToUpper(string(item.Tool)), tone: "success"})
+	}
+	switch item.ConflictState {
+	case "only-in-project":
+		badges = append(badges, badge{label: "ONLY PROJECT", tone: "accent"})
+	case "only-in-user/global":
+		badges = append(badges, badge{label: "ONLY EXTERNAL", tone: "muted"})
+	case "both-present":
+		badges = append(badges, badge{label: "BOTH", tone: "success"})
+	case "content-diverged":
+		badges = append(badges, badge{label: "DIVERGED", tone: "warning"})
+	}
+	if item.VariantCount > 1 {
+		badges = append(badges, badge{label: fmt.Sprintf("%d VAR", item.VariantCount), tone: "muted"})
+	}
 	if install, ok := m.installByPath[item.Path]; ok {
 		tone := "success"
-		label := "INSTALLED"
+		label := "SYNCED"
 		if install.Overwrote {
 			tone = "warning"
 			label = "UPDATED"
@@ -1757,6 +1932,197 @@ func (m Model) targetTool() domain.Tool {
 		return toolOrder[0]
 	}
 	return toolOrder[m.targetIdx]
+}
+
+func (m Model) projectRootForPath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(path)
+	bestRoot := ""
+	bestLen := 0
+	for _, item := range m.snapshot.Projects {
+		root := filepath.Clean(item.Root)
+		if cleaned != root && !strings.HasPrefix(cleaned, root+string(filepath.Separator)) {
+			continue
+		}
+		if len(root) > bestLen {
+			bestRoot = root
+			bestLen = len(root)
+		}
+	}
+	return bestRoot
+}
+
+func (m Model) skillProjectRoot() string {
+	if m.activeProjectRoot != "" {
+		return filepath.Clean(m.activeProjectRoot)
+	}
+	if strings.TrimSpace(m.snapshot.Detect.ProjectRoot) == "" {
+		return ""
+	}
+	return filepath.Clean(m.snapshot.Detect.ProjectRoot)
+}
+
+func (m Model) matchesActiveProjectPath(path string) bool {
+	if strings.TrimSpace(m.activeProjectRoot) == "" {
+		return true
+	}
+	return samePath(m.projectRootForPath(path), m.activeProjectRoot)
+}
+
+func (m Model) matchesActiveProjectSkill(item SkillEntry) bool {
+	if strings.TrimSpace(m.activeProjectRoot) == "" {
+		return true
+	}
+	if item.Scope == "" {
+		return samePath(m.projectRootForPath(item.Path), m.activeProjectRoot)
+	}
+	if item.Scope != "project" {
+		return true
+	}
+	return samePath(m.projectRootForPath(item.Path), m.activeProjectRoot)
+}
+
+func (m Model) matchesActiveProjectSession(item sessionItem) bool {
+	if strings.TrimSpace(m.activeProjectRoot) == "" {
+		return true
+	}
+	if root := m.projectRootForPath(item.Session.ProjectRoot); root != "" {
+		return samePath(root, m.activeProjectRoot)
+	}
+	return samePath(m.projectRootForPath(item.Session.StoragePath), m.activeProjectRoot)
+}
+
+func (m *Model) moveSkillTarget(delta int) {
+	item, ok := m.selectedSkill()
+	if !ok {
+		return
+	}
+	targets := m.availableSkillTargets(item)
+	if len(targets) == 0 {
+		return
+	}
+	current, ok := m.selectedSkillTarget(item)
+	index := 0
+	if ok {
+		for i, target := range targets {
+			if target.ID == current.ID {
+				index = i
+				break
+			}
+		}
+	}
+	index = wrapIndex(index+delta, len(targets))
+	m.skillTargetByPath[item.Path] = targets[index].ID
+}
+
+func (m Model) selectedSkillTarget(item SkillEntry) (SkillTarget, bool) {
+	targets := m.availableSkillTargets(item)
+	if len(targets) == 0 {
+		return SkillTarget{}, false
+	}
+	if selectedID, ok := m.skillTargetByPath[item.Path]; ok {
+		for _, target := range targets {
+			if target.ID == selectedID {
+				return target, true
+			}
+		}
+	}
+	if item.Scope != "project" {
+		for _, target := range targets {
+			if target.Scope == "project" {
+				return target, true
+			}
+		}
+	}
+	if item.Scope == "project" {
+		for _, target := range targets {
+			if target.SameSource {
+				continue
+			}
+			if target.Exists {
+				return target, true
+			}
+		}
+		for _, target := range targets {
+			if target.Scope != "project" && !target.SameSource {
+				return target, true
+			}
+		}
+	}
+	return targets[0], true
+}
+
+func (m Model) availableSkillTargets(item SkillEntry) []SkillTarget {
+	name := skillDirName(item)
+	targets := []SkillTarget{}
+	seen := map[string]struct{}{}
+	add := func(id string, label string, scope string, tool domain.Tool, skillPath string) {
+		cleaned := filepath.Clean(skillPath)
+		if cleaned == "" {
+			return
+		}
+		if _, ok := seen[cleaned]; ok {
+			return
+		}
+		seen[cleaned] = struct{}{}
+		targets = append(targets, SkillTarget{
+			ID:         id,
+			Label:      label,
+			Scope:      scope,
+			Tool:       tool,
+			Path:       cleaned,
+			Exists:     m.skillTargetExists(item, cleaned),
+			SameSource: samePath(cleaned, item.Path),
+		})
+	}
+
+	if projectRoot := m.skillProjectRoot(); projectRoot != "" {
+		add("project:"+projectRoot, "project", "project", "", filepath.Join(projectRoot, "skills", name, "SKILL.md"))
+	}
+	homeDir := strings.TrimSpace(m.snapshot.HomeDir)
+	if homeDir != "" {
+		add("user:codex", "codex user", "user", domain.ToolCodex, filepath.Join(homeDir, ".codex", "skills", name, "SKILL.md"))
+		add("user:claude", "claude user", "user", domain.ToolClaude, filepath.Join(homeDir, ".claude", "skills", name, "SKILL.md"))
+		add("user:opencode", "opencode user", "user", domain.ToolOpenCode, filepath.Join(homeDir, ".config", "opencode", "skills", name, "SKILL.md"))
+		add("global:opencode", "opencode global", "global", domain.ToolOpenCode, filepath.Join(homeDir, ".local", "share", "opencode", "skills", name, "SKILL.md"))
+	}
+
+	sort.SliceStable(targets, func(i, j int) bool {
+		if skillScopeRank(targets[i].Scope) == skillScopeRank(targets[j].Scope) {
+			if targets[i].Tool == targets[j].Tool {
+				return targets[i].Path < targets[j].Path
+			}
+			return targets[i].Tool < targets[j].Tool
+		}
+		return skillScopeRank(targets[i].Scope) < skillScopeRank(targets[j].Scope)
+	})
+	return targets
+}
+
+func (m Model) skillTargetExists(item SkillEntry, targetPath string) bool {
+	if samePath(item.Path, targetPath) {
+		return true
+	}
+	for _, variant := range item.Variants {
+		if samePath(variant.Path, targetPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func skillDirName(item SkillEntry) string {
+	name := filepath.Base(filepath.Dir(item.Path))
+	if name != "" && name != "." && name != string(filepath.Separator) {
+		return name
+	}
+	name = sanitizeSegment(item.Name)
+	if name == "" {
+		return "skill"
+	}
+	return name
 }
 
 func (m Model) currentPreviewTab() PreviewTab {
@@ -1848,11 +2214,14 @@ func (m Model) layoutMode() layoutMode {
 
 func (m Model) contextActions() string {
 	actions := []string{"[/] search", "[r] refresh", "[?] help", "[q] quit"}
+	if m.activeProjectRoot != "" {
+		actions = append(actions, "[c] clear-scope")
+	}
 	switch m.activeSection {
 	case sectionSessions:
 		actions = append(actions, "[i] import", "[d] doctor", "[e] export", "[t] target")
 	case sectionSkills:
-		actions = append(actions, "[I] install")
+		actions = append(actions, "[I] sync", "[t] target")
 	case sectionMCP:
 		actions = append(actions, "[p] validate")
 	}
@@ -1940,6 +2309,12 @@ func (m *Model) selectVisibleIndex(index int) {
 	case sectionSessions:
 		m.setSessionIndex(index)
 	case sectionProjects:
+		items := m.filteredProjects()
+		if index >= 0 && index < len(items) && samePath(items[index].Root, m.activeProjectRoot) && index == clampIndex(m.projectIdx, len(items)) {
+			m.projectIdx = clampIndex(index, len(items))
+			m.clearActiveProject()
+			return
+		}
 		m.setProjectIndex(index)
 	case sectionSkills:
 		m.setSkillIndex(index)
@@ -1953,9 +2328,15 @@ func (m *Model) selectVisibleIndex(index int) {
 
 func (m *Model) setActiveSection(section workspaceSection) {
 	if m.activeSection == section {
+		if section == sectionProjects {
+			m.syncProjectSelectionToActive()
+		}
 		return
 	}
 	m.activeSection = section
+	if section == sectionProjects {
+		m.syncProjectSelectionToActive()
+	}
 	m.resetPreviewScroll()
 	m.ensureValidSelection()
 	m.ensureVisibleSelection()
@@ -1970,11 +2351,56 @@ func (m *Model) setSessionIndex(index int) {
 }
 
 func (m *Model) setProjectIndex(index int) {
-	if index == m.projectIdx {
+	items := m.filteredProjects()
+	next := clampIndex(index, len(items))
+	if next == m.projectIdx && len(items) > 0 && samePath(items[next].Root, m.activeProjectRoot) {
 		return
 	}
-	m.projectIdx = clampIndex(index, len(m.filteredProjects()))
+	m.projectIdx = next
+	if len(items) > 0 {
+		m.activeProjectRoot = filepath.Clean(items[m.projectIdx].Root)
+	}
 	m.resetPreviewScroll()
+	m.ensureValidSelection()
+	m.ensureVisibleSelection()
+}
+
+func (m *Model) clearActiveProject() {
+	if m.activeProjectRoot == "" {
+		return
+	}
+	m.activeProjectRoot = ""
+	m.resetPreviewScroll()
+	m.ensureValidSelection()
+	m.ensureSectionWithContent()
+	m.ensureVisibleSelection()
+}
+
+func (m *Model) reconcileActiveProject() {
+	if m.activeProjectRoot == "" {
+		return
+	}
+	for _, item := range m.snapshot.Projects {
+		if !samePath(item.Root, m.activeProjectRoot) {
+			continue
+		}
+		m.syncProjectSelectionToActive()
+		return
+	}
+	m.activeProjectRoot = ""
+}
+
+func (m *Model) syncProjectSelectionToActive() {
+	if m.activeProjectRoot == "" {
+		return
+	}
+	items := m.filteredProjects()
+	for i, item := range items {
+		if samePath(item.Root, m.activeProjectRoot) {
+			m.projectIdx = i
+			return
+		}
+	}
 }
 
 func (m *Model) setSkillIndex(index int) {
@@ -2153,6 +2579,19 @@ func sourceLabel(source string) string {
 	return parts[0]
 }
 
+func skillScopeRank(scope string) int {
+	switch scope {
+	case "project":
+		return 0
+	case "user":
+		return 1
+	case "global":
+		return 2
+	default:
+		return 3
+	}
+}
+
 func badgeStyle(label string, tone string) string {
 	style := lipgloss.NewStyle().
 		Padding(0, 1).
@@ -2291,6 +2730,13 @@ func shortPath(path string) string {
 		return "~" + strings.TrimPrefix(path, home)
 	}
 	return path
+}
+
+func samePath(a string, b string) bool {
+	if strings.TrimSpace(a) == "" || strings.TrimSpace(b) == "" {
+		return false
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func maxInt(a int, b int) int {

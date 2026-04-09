@@ -43,7 +43,7 @@ func TestWorkspaceActionsCoverSessionSkillAndMCPFlows(t *testing.T) {
 					{Name: "repo", Root: "/workspace/repo", WorkspaceRoot: "/workspace", Markers: []string{"git", "codex"}, SessionCount: 1},
 				},
 				Skills: []SkillEntry{
-					{Name: "frontend-design", Description: "Design frontend flows", Path: "/skills/frontend-design/SKILL.md", Source: "user", Content: "# frontend-design"},
+					{Name: "frontend-design", Description: "Design frontend flows", Path: "/skills/frontend-design/SKILL.md", Source: "codex user", Scope: "user", Tool: domain.ToolCodex, Content: "# frontend-design"},
 				},
 				MCPProfiles: []MCPEntry{
 					{Name: "claude settings", Path: "/configs/claude/settings.json", Status: "configured", Details: "1 declared server(s)", Tool: domain.ToolClaude, DeclaredServers: 1, RawConfig: `{"mcpServers":{"github":{}}}`},
@@ -83,8 +83,8 @@ func TestWorkspaceActionsCoverSessionSkillAndMCPFlows(t *testing.T) {
 				Files:      []string{"CLAUDE.work-bridge.md", "manifest.json"},
 			}, nil
 		},
-		InstallSkill: func(_ context.Context, _ SkillEntry) (SkillInstallResult, error) {
-			return SkillInstallResult{InstalledPath: "/workspace/repo/skills/frontend-design/SKILL.md"}, nil
+		InstallSkill: func(_ context.Context, _ SkillEntry, target SkillTarget) (SkillInstallResult, error) {
+			return SkillInstallResult{InstalledPath: target.Path, TargetID: target.ID, TargetLabel: target.Label, TargetScope: target.Scope}, nil
 		},
 		ProbeMCP: func(_ context.Context, _ MCPEntry) (MCPProbeResult, error) {
 			return MCPProbeResult{Reachable: true, ResourceCount: 1, Warnings: []string{"config-level only"}}, nil
@@ -176,7 +176,7 @@ func TestViewRendersAcrossResponsiveModes(t *testing.T) {
 			},
 		},
 		Projects:    []ProjectEntry{{Name: "repo", Root: "/workspace/repo", WorkspaceRoot: "/workspace", Markers: []string{"git"}}},
-		Skills:      []SkillEntry{{Name: "skill-one", Description: "desc", Path: "/skills/skill-one/SKILL.md"}},
+		Skills:      []SkillEntry{{Name: "skill-one", Description: "desc", Path: "/skills/skill-one/SKILL.md", Scope: "project"}},
 		MCPProfiles: []MCPEntry{{Name: "codex config", Path: "/configs/config.toml", Status: "configured", Tool: domain.ToolCodex}},
 		HealthSummary: WorkspaceHealthSummary{
 			InstalledTools: 1,
@@ -215,7 +215,7 @@ func TestMouseClickUsesRenderedHitboxesInCompactNav(t *testing.T) {
 		InspectByTool: map[domain.Tool]inspect.Report{
 			domain.ToolCodex: {Tool: "codex", Sessions: []inspect.Session{{ID: "session-1", Title: "Ship UI"}}},
 		},
-		Skills:      []SkillEntry{{Name: "skill-one", Description: "desc", Path: "/skills/skill-one/SKILL.md"}},
+		Skills:      []SkillEntry{{Name: "skill-one", Description: "desc", Path: "/skills/skill-one/SKILL.md", Scope: "project"}},
 		MCPProfiles: []MCPEntry{{Name: "claude settings", Path: "/configs/claude/settings.json", Status: "parsed", Tool: domain.ToolClaude}},
 	}
 
@@ -250,8 +250,8 @@ func TestMouseClickAndWheelDrivePreviewInteraction(t *testing.T) {
 	m.snapshot = WorkspaceSnapshot{
 		Detect: detect.Report{CWD: "/workspace/repo", ProjectRoot: "/workspace/repo"},
 		Skills: []SkillEntry{
-			{Name: "alpha", Description: "desc", Path: "/skills/alpha/SKILL.md", Content: strings.Join(contentLines, "\n")},
-			{Name: "beta", Description: "desc", Path: "/skills/beta/SKILL.md", Content: strings.Join(contentLines, "\n")},
+			{Name: "alpha", Description: "desc", Path: "/skills/alpha/SKILL.md", Scope: "project", Content: strings.Join(contentLines, "\n")},
+			{Name: "beta", Description: "desc", Path: "/skills/beta/SKILL.md", Scope: "project", Content: strings.Join(contentLines, "\n")},
 		},
 	}
 	m.skillTabIdx = 1
@@ -297,5 +297,193 @@ func TestMouseClickAndWheelDrivePreviewInteraction(t *testing.T) {
 	}
 	if m.focus != focusPreview {
 		t.Fatalf("expected preview focus after preview tab click, got %v", m.focus)
+	}
+}
+
+func TestProjectSelectionScopesWorkspaceAndCanBeCleared(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(context.Background(), Backend{})
+	m.width = 130
+	m.height = 28
+	m.activeSection = sectionProjects
+	m.snapshot = WorkspaceSnapshot{
+		Detect: detect.Report{CWD: "/workspace/repo", ProjectRoot: "/workspace/repo"},
+		InspectByTool: map[domain.Tool]inspect.Report{
+			domain.ToolCodex: {
+				Tool: "codex",
+				Sessions: []inspect.Session{
+					{ID: "repo-root", Title: "Root session", ProjectRoot: "/workspace/repo"},
+					{ID: "repo-nested", Title: "Nested session", ProjectRoot: "/workspace/repo/service"},
+					{ID: "other", Title: "Other session", ProjectRoot: "/workspace/other"},
+				},
+			},
+		},
+		Projects: []ProjectEntry{
+			{Name: "other", Root: "/workspace/other", WorkspaceRoot: "/workspace", SessionCount: 1, SessionByTool: map[string]int{"codex": 1}},
+			{Name: "repo", Root: "/workspace/repo", WorkspaceRoot: "/workspace", SessionCount: 1, SkillCount: 1, MCPCount: 1, SessionByTool: map[string]int{"codex": 1}},
+			{Name: "service", Root: "/workspace/repo/service", WorkspaceRoot: "/workspace", SessionCount: 1, SkillCount: 1, MCPCount: 1, SessionByTool: map[string]int{"codex": 1}},
+		},
+		Skills: []SkillEntry{
+			{Name: "repo-skill", Path: "/workspace/repo/skills/root/SKILL.md", Scope: "project"},
+			{Name: "service-skill", Path: "/workspace/repo/service/skills/nested/SKILL.md", Scope: "project"},
+			{Name: "other-skill", Path: "/workspace/other/skills/other/SKILL.md", Scope: "project"},
+		},
+		MCPProfiles: []MCPEntry{
+			{Name: "repo mcp", Path: "/workspace/repo/.claude/settings.json"},
+			{Name: "service mcp", Path: "/workspace/repo/service/.claude/settings.json"},
+			{Name: "other mcp", Path: "/workspace/other/.claude/settings.json"},
+		},
+	}
+
+	if got := len(m.filteredSessions()); got != 3 {
+		t.Fatalf("expected unscoped sessions, got %d", got)
+	}
+
+	m.setProjectIndex(1)
+
+	if !samePath(m.activeProjectRoot, "/workspace/repo") {
+		t.Fatalf("expected active project root /workspace/repo, got %q", m.activeProjectRoot)
+	}
+	if got := len(m.filteredSessions()); got != 1 {
+		t.Fatalf("expected only root project session, got %d", got)
+	}
+	if got := len(m.filteredSkills()); got != 1 {
+		t.Fatalf("expected only root project skill, got %d", got)
+	}
+	if got := len(m.filteredMCP()); got != 1 {
+		t.Fatalf("expected only root project mcp, got %d", got)
+	}
+
+	preview := m.renderProjectPreview()
+	for _, want := range []string{"Scope: active", "Sessions by Tool", "- codex: 1"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("expected project preview to contain %q, got %q", want, preview)
+		}
+	}
+
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Text: "c", Code: 'c'}))
+	m = updated.(Model)
+
+	if m.activeProjectRoot != "" {
+		t.Fatalf("expected cleared active project root, got %q", m.activeProjectRoot)
+	}
+	if got := len(m.filteredSessions()); got != 3 {
+		t.Fatalf("expected restored session view after clear, got %d", got)
+	}
+}
+
+func TestMouseClickOnActiveProjectClearsScope(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(context.Background(), Backend{})
+	m.width = 120
+	m.height = 28
+	m.activeSection = sectionProjects
+	m.snapshot = WorkspaceSnapshot{
+		Projects: []ProjectEntry{
+			{Name: "repo", Root: "/workspace/repo", WorkspaceRoot: "/workspace"},
+			{Name: "other", Root: "/workspace/other", WorkspaceRoot: "/workspace"},
+		},
+		InspectByTool: map[domain.Tool]inspect.Report{
+			domain.ToolCodex: {Tool: "codex", Sessions: []inspect.Session{{ID: "repo", ProjectRoot: "/workspace/repo"}, {ID: "other", ProjectRoot: "/workspace/other"}}},
+		},
+	}
+	m.setProjectIndex(1)
+
+	layout := m.currentLayout()
+	clickX := layout.list.X + 3
+	clickY := layout.list.Y + 4
+
+	updated, _ := m.Update(tea.MouseClickMsg(tea.Mouse{X: clickX, Y: clickY, Button: tea.MouseLeft}))
+	m = updated.(Model)
+
+	if m.activeProjectRoot != "" {
+		t.Fatalf("expected active project to clear on repeated click, got %q", m.activeProjectRoot)
+	}
+	if got := len(m.filteredSessions()); got != 2 {
+		t.Fatalf("expected all sessions after clear, got %d", got)
+	}
+}
+
+func TestSkillSyncTargetsPreferProjectAndCanCycleToExternalScopes(t *testing.T) {
+	t.Parallel()
+
+	var syncedTarget SkillTarget
+
+	backend := Backend{
+		InstallSkill: func(_ context.Context, _ SkillEntry, target SkillTarget) (SkillInstallResult, error) {
+			syncedTarget = target
+			return SkillInstallResult{
+				InstalledPath: target.Path,
+				TargetID:      target.ID,
+				TargetLabel:   target.Label,
+				TargetScope:   target.Scope,
+			}, nil
+		},
+	}
+
+	m := NewModel(context.Background(), backend)
+	m.activeSection = sectionSkills
+	m.snapshot = WorkspaceSnapshot{
+		HomeDir: "/home/me",
+		Detect:  detect.Report{ProjectRoot: "/workspace/repo"},
+		Skills: []SkillEntry{
+			{
+				Name:          "frontend-design",
+				Path:          "/home/me/.codex/skills/frontend-design/SKILL.md",
+				Scope:         "user",
+				Tool:          domain.ToolCodex,
+				Source:        "codex user",
+				ConflictState: "only-in-user/global",
+				VariantCount:  1,
+			},
+			{
+				Name:          "lint-helper",
+				Path:          "/workspace/repo/skills/lint-helper/SKILL.md",
+				Scope:         "project",
+				Source:        "project skills",
+				ConflictState: "only-in-project",
+				VariantCount:  1,
+			},
+		},
+	}
+
+	item, ok := m.selectedSkill()
+	if !ok {
+		t.Fatalf("expected selected skill")
+	}
+	target, ok := m.selectedSkillTarget(item)
+	if !ok {
+		t.Fatalf("expected default target")
+	}
+	if target.Scope != "project" || target.Path != "/workspace/repo/skills/frontend-design/SKILL.md" {
+		t.Fatalf("expected default project sync target, got %#v", target)
+	}
+
+	if cmd := m.installSelectedSkillCmd(); cmd != nil {
+		updated, _ := m.Update(cmd())
+		m = updated.(Model)
+	}
+	if syncedTarget.Path != "/workspace/repo/skills/frontend-design/SKILL.md" {
+		t.Fatalf("expected project sync path, got %#v", syncedTarget)
+	}
+
+	m.setSkillIndex(1)
+	m.moveSkillTarget(1)
+	projectSkill, _ := m.selectedSkill()
+	target, ok = m.selectedSkillTarget(projectSkill)
+	if !ok {
+		t.Fatalf("expected cycled target for project skill")
+	}
+	if target.Scope != "user" {
+		t.Fatalf("expected external user target after cycling, got %#v", target)
+	}
+
+	preview := m.renderSkillPreview()
+	for _, want := range []string{"Selected Target", "Action: create", "Conflict: only-in-project"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("expected skill preview to contain %q, got %q", want, preview)
+		}
 	}
 }
