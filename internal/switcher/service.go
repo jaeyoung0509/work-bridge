@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -27,6 +28,7 @@ type Service struct {
 	toolPaths domain.ToolPaths
 	redaction domain.RedactionPolicy
 	lookPath  func(string) (string, error)
+	runCmd    commandRunner
 	now       func() time.Time
 }
 
@@ -37,6 +39,7 @@ type Options struct {
 	ToolPaths domain.ToolPaths
 	Redaction domain.RedactionPolicy
 	LookPath  func(string) (string, error)
+	RunCmd    commandRunner
 	Now       func() time.Time
 }
 
@@ -45,6 +48,7 @@ type Request struct {
 	Session       string
 	To            domain.Tool
 	ProjectRoot   string
+	Mode          domain.SwitchMode
 	IncludeSkills bool
 	IncludeMCP    bool
 	DryRun        bool
@@ -69,10 +73,16 @@ type WorkspaceItem struct {
 	UpdatedAt   string      `json:"updated_at,omitempty"`
 }
 
+type commandRunner func(context.Context, string, ...string) ([]byte, []byte, error)
+
 func New(opts Options) *Service {
 	now := opts.Now
 	if now == nil {
 		now = time.Now
+	}
+	runCmd := opts.RunCmd
+	if runCmd == nil {
+		runCmd = defaultCommandRunner
 	}
 	return &Service{
 		fs:        opts.FS,
@@ -81,8 +91,21 @@ func New(opts Options) *Service {
 		toolPaths: opts.ToolPaths,
 		redaction: opts.Redaction,
 		lookPath:  opts.LookPath,
+		runCmd:    runCmd,
 		now:       now,
 	}
+}
+
+func defaultCommandRunner(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	stdout, err := cmd.Output()
+	if err == nil {
+		return stdout, nil, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return stdout, exitErr.Stderr, err
+	}
+	return stdout, nil, err
 }
 
 func (s *Service) LoadWorkspace(ctx context.Context) (Workspace, error) {
@@ -155,7 +178,7 @@ func (s *Service) Preview(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	plan, err := adapter.Preview(resolved.payload, resolved.req.ProjectRoot)
+	plan, err := adapter.Preview(resolved.payload, resolved.req.ProjectRoot, resolved.req.Mode, "")
 	if err != nil {
 		return Result{}, err
 	}
@@ -174,11 +197,17 @@ func (s *Service) Apply(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	plan, err := adapter.Preview(resolved.payload, resolved.req.ProjectRoot)
+	plan, err := adapter.Preview(resolved.payload, resolved.req.ProjectRoot, resolved.req.Mode, "")
 	if err != nil {
 		return Result{}, err
 	}
-	report, err := adapter.ApplyProject(resolved.payload, plan)
+	var report domain.ApplyReport
+	switch resolved.req.Mode {
+	case domain.SwitchModeNative:
+		report, err = adapter.ApplyNativeProject(resolved.payload, plan)
+	default:
+		report, err = adapter.ApplyProject(resolved.payload, plan)
+	}
 	if err != nil {
 		return Result{}, err
 	}
@@ -202,7 +231,7 @@ func (s *Service) Export(ctx context.Context, req Request, outRoot string) (Resu
 	if err != nil {
 		return Result{}, err
 	}
-	plan, err := adapter.Preview(resolved.payload, exportRoot)
+	plan, err := adapter.Preview(resolved.payload, resolved.req.ProjectRoot, resolved.req.Mode, exportRoot)
 	if err != nil {
 		return Result{}, err
 	}
@@ -212,7 +241,13 @@ func (s *Service) Export(ctx context.Context, req Request, outRoot string) (Resu
 			Plan:    plan,
 		}, nil
 	}
-	report, err := adapter.ExportProject(resolved.payload, plan)
+	var report domain.ApplyReport
+	switch resolved.req.Mode {
+	case domain.SwitchModeNative:
+		report, err = adapter.ExportNative(resolved.payload, plan)
+	default:
+		report, err = adapter.ExportProject(resolved.payload, plan)
+	}
 	if err != nil {
 		return Result{}, err
 	}
@@ -237,6 +272,12 @@ func (s *Service) resolveRequest(ctx context.Context, req Request) (resolvedRequ
 	}
 	if !req.To.IsKnown() {
 		return resolvedRequest{}, fmt.Errorf("unsupported target tool %q", req.To)
+	}
+	if req.Mode == "" {
+		req.Mode = domain.SwitchModeProject
+	}
+	if !req.Mode.IsKnown() {
+		return resolvedRequest{}, fmt.Errorf("unsupported switch mode %q", req.Mode)
 	}
 	projectRoot, err := s.resolveProjectRoot(req.ProjectRoot)
 	if err != nil {
@@ -479,9 +520,13 @@ func (s *Service) collectMCP(projectRoot string) (domain.MCPPayload, error) {
 
 func (s *Service) adapterFor(target domain.Tool) (domain.TargetAdapter, error) {
 	return &projectAdapter{
-		target: target,
-		fs:  s.fs,
-		now: s.now,
+		target:    target,
+		fs:        s.fs,
+		now:       s.now,
+		homeDir:   s.homeDir,
+		toolPaths: s.toolPaths,
+		lookPath:  s.lookPath,
+		runCmd:    s.runCmd,
 	}, nil
 }
 

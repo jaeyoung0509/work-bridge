@@ -383,136 +383,6 @@ func inspectClaude(opts Options) ([]Session, []string, error) {
 	return sessions, notes, nil
 }
 
-func inspectOpenCode(opts Options) ([]Session, []string, error) {
-	opencodeDir := opts.ToolPaths.Dir(domain.ToolOpenCode, opts.HomeDir)
-	roots := []string{
-		filepath.Join(opencodeDir, "storage", "session"),
-		filepath.Join(opencodeDir, "project"),
-		filepath.Join(opts.HomeDir, ".config", "opencode"),
-	}
-
-	files := []string{}
-	for _, root := range roots {
-		candidates, err := listFilesRecursive(opts.FS, root)
-		if err != nil {
-			return nil, nil, err
-		}
-		files = append(files, candidates...)
-	}
-
-	sessions := []Session{}
-	seen := map[string]struct{}{}
-	unreadable := 0
-	unparsed := 0
-
-	for _, path := range files {
-		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".json" && ext != ".jsonl" && ext != ".jsonc" {
-			continue
-		}
-
-		data, err := opts.FS.ReadFile(path)
-		if err != nil {
-			unreadable++
-			continue
-		}
-
-		session, ok := parseOpenCodeSession(path, data)
-		if !ok {
-			unparsed++
-			continue
-		}
-		if session.ID == "" {
-			session.ID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-		}
-		if _, exists := seen[session.ID]; exists {
-			continue
-		}
-		seen[session.ID] = struct{}{}
-		sessions = append(sessions, session)
-	}
-
-	sortSessions(sessions)
-
-	notes := []string{
-		"OpenCode sessions are discovered from ~/.local/share/opencode/storage/session and related project storage directories.",
-	}
-	if unreadable > 0 {
-		notes = append(notes, fmt.Sprintf("%d OpenCode session files could not be read.", unreadable))
-	}
-	if unparsed > 0 {
-		notes = append(notes, fmt.Sprintf("%d OpenCode files looked session-like but could not be parsed.", unparsed))
-	}
-	return sessions, notes, nil
-}
-
-func parseOpenCodeSession(path string, data []byte) (Session, bool) {
-	if strings.HasSuffix(strings.ToLower(path), ".jsonl") {
-		lines := splitLines(data)
-		for _, line := range lines {
-			session, ok := parseOpenCodeSessionJSON(path, line)
-			if ok {
-				return session, true
-			}
-		}
-		return Session{}, false
-	}
-	return parseOpenCodeSessionJSON(path, data)
-}
-
-func splitLines(data []byte) [][]byte {
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	scanner.Buffer(make([]byte, 0, 1024*1024), 8*1024*1024)
-	lines := [][]byte{}
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-		lines = append(lines, append([]byte(nil), line...))
-	}
-	return lines
-}
-
-func parseOpenCodeSessionJSON(path string, data []byte) (Session, bool) {
-	cleaned := stripJSONCComments(data)
-	var raw map[string]any
-	if err := json.Unmarshal(cleaned, &raw); err != nil {
-		return Session{}, false
-	}
-
-	session := Session{
-		StoragePath: path,
-		ProjectRoot: stringField(raw, "projectRoot", "project_root", "cwd", "dir", "path"),
-	}
-	session.ID = stringField(raw, "id", "sessionId", "sessionID", "session_id")
-	session.Title = stringField(raw, "title", "display", "thread_name", "prompt", "name")
-	session.StartedAt = stringField(raw, "createdAt", "created_at", "startTime", "start_time", "startedAt", "started_at", "timestamp")
-	session.UpdatedAt = stringField(raw, "updatedAt", "updated_at", "lastUpdated", "last_updated", "modifiedAt", "modified_at")
-	if session.ProjectRoot == "" {
-		session.ProjectRoot = stringField(raw, "projectID", "projectId")
-	}
-	if session.Title == "" {
-		session.Title = summarizeOpenCodeTitle(raw)
-	}
-	if count := len(anySlice(raw, "messages", "events", "items")); count > 0 {
-		session.MessageCount = count
-	}
-	if session.ID == "" && session.Title == "" && session.ProjectRoot == "" {
-		return Session{}, false
-	}
-	return session, true
-}
-
-func summarizeOpenCodeTitle(raw map[string]any) string {
-	for _, key := range []string{"prompt", "summary", "display", "title"} {
-		if value := stringField(raw, key); value != "" {
-			return truncate(value)
-		}
-	}
-	return ""
-}
-
 func stringField(raw map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := raw[key]; ok {
@@ -822,4 +692,18 @@ func readJSONLLines[T any](fs fsx.FS, path string, parse func([]byte) (T, error)
 	}
 
 	return values, nil
+}
+
+func splitLines(data []byte) [][]byte {
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	scanner.Buffer(make([]byte, 0, 1024*1024), 8*1024*1024)
+	lines := [][]byte{}
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		lines = append(lines, append([]byte(nil), line...))
+	}
+	return lines
 }

@@ -8,7 +8,7 @@
 - applies a target-ready state into project-native files
 - exports the same target-ready state to a separate directory
 
-It does **not** write into another tool's home-level session database.
+By default (`--mode project`), it applies changes to managed project files. Using `--mode native`, it actively writes the actual resume state into the target tool's home-level session database or uses the target's native CLI delegate to ensure the session can be seamlessly resumed.
 
 > **Stability:** `work-bridge` is still early and not fully stable. Project-native apply and export paths are covered by tests, but some migration paths are still under active refinement. Use `--dry-run` first when trying a new source/target pair.
 
@@ -41,14 +41,17 @@ The current design is intentionally simpler than the older import/export pipelin
 
 ## Supported Tools
 
-| Tool | Inspect source sessions | Apply to project files | Export target-ready tree |
+| Tool | Inspect source sessions | Project Mode (`--mode project`) | Native Mode (`--mode native`) |
 |------|:-----------------------:|:----------------------:|:------------------------:|
 | **Claude Code** | ✅ | ✅ | ✅ |
 | **Gemini CLI** | ✅ | ✅ | ✅ |
-| **OpenCode** | ✅ | ✅ | ✅ |
+| **OpenCode** | ✅ (SQLite) | ✅ | ✅ (Delegate)* |
 | **Codex CLI** | ✅ | ✅ | ✅ |
 
-Project-native apply means files inside the project root only. `work-bridge` does **not** recreate native session state in `~/.codex`, `~/.gemini`, `~/.claude`, or `~/.config/opencode`.
+* OpenCode Native apply and export utilize the official OpenCode CLI delegate (`opencode import <file>`) to ensure database integrity rather than performing direct raw SQLite writes.
+
+**Mode Project:** Applies instruction files (`CLAUDE.md`, `GEMINI.md`, etc.) and tools/skills inside the project root only.
+**Mode Native:** Modifies external system state (e.g. `~/.codex/session_index.jsonl`, `~/.gemini/projects.json`, `~/.claude/projects/`, or invokes `opencode import`) to directly load the resume state.
 
 ---
 
