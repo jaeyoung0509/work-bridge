@@ -21,7 +21,7 @@ The default entrypoint is a Bubble Tea TUI. Legacy CLI commands remain available
 - `Sessions`: inspect, import, doctor, export
 - `Projects`: index project roots from configured workspace roots and drive active workspace scope
 - `Skills`: inspect grouped skills, compare project/user/global coverage, and sync across scopes
-- `MCP`: inspect known config locations and run runtime stdio validation
+- `MCP`: inspect known config locations, merge effective scope by server, and run runtime validation for stdio, HTTP, and SSE transports
 - `Logs`: recent workspace actions and errors
 
 Mouse support currently covers:
@@ -31,9 +31,7 @@ Mouse support currently covers:
 - preview tab switching
 - wheel scrolling for lists and previews
 
-MCP validation now performs a real stdio handshake for command-based servers. `work-bridge` sends `initialize`, follows with `notifications/initialized`, and counts advertised `resources`, `resourceTemplates`, `tools`, and `prompts` where available.
-
-HTTP/SSE MCP transports are not probed yet.
+MCP validation performs a real runtime handshake where the transport supports it. `work-bridge` sends `initialize`, follows with `notifications/initialized`, and counts advertised `resources`, `resourceTemplates`, `tools`, and `prompts` where available for stdio, HTTP, and legacy SSE servers.
 
 ## Build
 

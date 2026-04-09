@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,6 +121,138 @@ func TestProbeMCPFromTUIProbesRuntimeServer(t *testing.T) {
 	}
 }
 
+func TestProbeMCPFromTUIProbesHTTPServer(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	configPath := filepath.Join(root, "settings.json")
+	writeFile(t, configPath, `{"mcpServers":{"github":{"url":"http://example.test"}}}`)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		method, _ := payload["method"].(string)
+		if method == "notifications/initialized" {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(mcpTestResponse(payload["id"], method))
+	}))
+	defer server.Close()
+
+	app := New(nil, nil)
+	app.fs = fsx.OSFS{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	result, err := app.probeMCPFromTUI(ctx, tui.MCPEntry{
+		Name: "github",
+		Path: configPath,
+		Tool: domain.ToolClaude,
+		Servers: []tui.MCPServerConfig{{
+			Name:      "github",
+			Transport: "http",
+			URL:       server.URL,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("probe mcp http failed: %v", err)
+	}
+	if !result.Reachable {
+		t.Fatalf("expected http probe to be reachable: %#v", result)
+	}
+	if result.Mode != "runtime-http" {
+		t.Fatalf("expected runtime-http mode, got %q", result.Mode)
+	}
+	if result.ResourceCount != 2 || result.TemplateCount != 1 || result.ToolCount != 3 || result.PromptCount != 1 {
+		t.Fatalf("unexpected aggregate counts: %#v", result)
+	}
+}
+
+func TestProbeMCPFromTUIProbesLegacySSEServer(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	configPath := filepath.Join(root, "settings.json")
+	writeFile(t, configPath, `{"mcpServers":{"github":{"transport":"sse","url":"http://example.test/events"}}}`)
+
+	responses := make(chan map[string]any, 16)
+	mux := http.NewServeMux()
+	var server *httptest.Server
+
+	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatalf("response writer does not support flushing")
+		}
+		fmt.Fprintf(w, "event: endpoint\ndata: %s/messages\n\n", server.URL)
+		flusher.Flush()
+		for {
+			select {
+			case payload := <-responses:
+				body, err := json.Marshal(payload)
+				if err != nil {
+					t.Fatalf("marshal sse payload: %v", err)
+				}
+				fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(body))
+				flusher.Flush()
+			case <-r.Context().Done():
+				return
+			}
+		}
+	})
+	mux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode sse request: %v", err)
+		}
+		method, _ := payload["method"].(string)
+		if method != "notifications/initialized" {
+			responses <- mcpTestResponse(payload["id"], method)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+	server = httptest.NewServer(mux)
+	defer server.Close()
+
+	app := New(nil, nil)
+	app.fs = fsx.OSFS{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	result, err := app.probeMCPFromTUI(ctx, tui.MCPEntry{
+		Name: "github",
+		Path: configPath,
+		Tool: domain.ToolClaude,
+		Servers: []tui.MCPServerConfig{{
+			Name:      "github",
+			Transport: "sse",
+			URL:       server.URL + "/events",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("probe mcp sse failed: %v", err)
+	}
+	if !result.Reachable {
+		t.Fatalf("expected sse probe to be reachable: %#v", result)
+	}
+	if result.Mode != "runtime-sse" {
+		t.Fatalf("expected runtime-sse mode, got %q", result.Mode)
+	}
+	if result.ResourceCount != 2 || result.TemplateCount != 1 || result.ToolCount != 3 || result.PromptCount != 1 {
+		t.Fatalf("unexpected aggregate counts: %#v", result)
+	}
+}
+
 func TestSummarizeMCPConfigCountsDeclaredServers(t *testing.T) {
 	t.Parallel()
 
@@ -142,6 +277,62 @@ func TestSummarizeMCPConfigCountsDeclaredServers(t *testing.T) {
 	}
 	if len(summary.Warnings) != 0 {
 		t.Fatalf("expected no warnings, got %v", summary.Warnings)
+	}
+}
+
+func TestBuildLogicalMCPEntriesMergesDeclarationsByServer(t *testing.T) {
+	t.Parallel()
+
+	entries := buildLogicalMCPEntries([]mcpConfigProfile{
+		{
+			Name:        "project claude settings",
+			Path:        "/workspace/repo/.claude/settings.json",
+			Source:      "project",
+			Tool:        domain.ToolClaude,
+			BinaryFound: true,
+			BinaryPath:  "/opt/bin/claude",
+			Summary: mcpConfigSummary{
+				Status: "parsed",
+				Servers: []tui.MCPServerConfig{{
+					Name:      "github",
+					Transport: "stdio",
+					Command:   "mcp-github-project",
+				}},
+			},
+		},
+		{
+			Name:        "global claude settings",
+			Path:        "/home/me/.claude/settings.json",
+			Source:      "user",
+			Tool:        domain.ToolClaude,
+			BinaryFound: true,
+			BinaryPath:  "/opt/bin/claude",
+			Summary: mcpConfigSummary{
+				Status: "parsed",
+				Servers: []tui.MCPServerConfig{{
+					Name:      "github",
+					Transport: "stdio",
+					Command:   "mcp-github-user",
+				}},
+			},
+		},
+	})
+
+	if len(entries) != 1 {
+		t.Fatalf("expected one logical mcp entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry.Kind != "server" || entry.Name != "github" {
+		t.Fatalf("expected logical github server entry, got %#v", entry)
+	}
+	if entry.Scope != "project" {
+		t.Fatalf("expected project declaration to win by default, got %#v", entry)
+	}
+	if len(entry.Declarations) != 2 {
+		t.Fatalf("expected merged declarations, got %#v", entry)
+	}
+	if len(entry.HiddenScopes) != 1 {
+		t.Fatalf("expected one hidden scope, got %#v", entry.HiddenScopes)
 	}
 }
 
@@ -245,6 +436,61 @@ func TestEnrichSkillEntriesAssignsConflictState(t *testing.T) {
 	if lintUser.ConflictState != "only-in-user/global" || lintUser.VariantCount != 1 {
 		t.Fatalf("expected user-only grouped skill, got %#v", lintUser)
 	}
+}
+
+func mcpTestResponse(id any, method string) map[string]any {
+	response := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+	}
+	switch method {
+	case "initialize":
+		response["result"] = map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities": map[string]any{
+				"resources": map[string]any{},
+				"tools":     map[string]any{},
+				"prompts":   map[string]any{},
+			},
+			"serverInfo": map[string]any{
+				"name":    "helper",
+				"version": "test",
+			},
+		}
+	case "resources/list":
+		response["result"] = map[string]any{
+			"resources": []map[string]any{
+				{"uri": "file:///one", "name": "one"},
+				{"uri": "file:///two", "name": "two"},
+			},
+		}
+	case "resources/templates/list":
+		response["result"] = map[string]any{
+			"resourceTemplates": []map[string]any{
+				{"uriTemplate": "file:///{name}", "name": "file"},
+			},
+		}
+	case "tools/list":
+		response["result"] = map[string]any{
+			"tools": []map[string]any{
+				{"name": "one"},
+				{"name": "two"},
+				{"name": "three"},
+			},
+		}
+	case "prompts/list":
+		response["result"] = map[string]any{
+			"prompts": []map[string]any{
+				{"name": "prompt-one"},
+			},
+		}
+	default:
+		response["error"] = map[string]any{
+			"code":    -32601,
+			"message": "unsupported method",
+		}
+	}
+	return response
 }
 
 func TestMCPHelperProcess(t *testing.T) {

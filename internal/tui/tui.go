@@ -97,12 +97,16 @@ type SkillTarget struct {
 }
 
 type MCPEntry struct {
+	ID              string            `json:"id,omitempty"`
+	Kind            string            `json:"kind,omitempty"`
 	Name            string            `json:"name"`
 	Path            string            `json:"path"`
 	Source          string            `json:"source"`
+	Scope           string            `json:"scope,omitempty"`
 	Status          string            `json:"status"`
 	Details         string            `json:"details"`
 	Tool            domain.Tool       `json:"tool,omitempty"`
+	Transport       string            `json:"transport,omitempty"`
 	Format          string            `json:"format,omitempty"`
 	DeclaredServers int               `json:"declared_servers,omitempty"`
 	ServerNames     []string          `json:"server_names,omitempty"`
@@ -111,7 +115,25 @@ type MCPEntry struct {
 	ParseWarnings   []string          `json:"parse_warnings,omitempty"`
 	BinaryFound     bool              `json:"binary_found"`
 	BinaryPath      string            `json:"binary_path,omitempty"`
+	HiddenScopes    []string          `json:"hidden_scopes,omitempty"`
 	Servers         []MCPServerConfig `json:"servers,omitempty"`
+	Declarations    []MCPDeclaration  `json:"declarations,omitempty"`
+}
+
+type MCPDeclaration struct {
+	Label         string          `json:"label,omitempty"`
+	Path          string          `json:"path"`
+	Source        string          `json:"source"`
+	Scope         string          `json:"scope,omitempty"`
+	Status        string          `json:"status,omitempty"`
+	Details       string          `json:"details,omitempty"`
+	Format        string          `json:"format,omitempty"`
+	ParseSource   string          `json:"parse_source,omitempty"`
+	RawConfig     string          `json:"raw_config,omitempty"`
+	ParseWarnings []string        `json:"parse_warnings,omitempty"`
+	BinaryFound   bool            `json:"binary_found"`
+	BinaryPath    string          `json:"binary_path,omitempty"`
+	Server        MCPServerConfig `json:"server,omitempty"`
 }
 
 type MCPServerConfig struct {
@@ -343,7 +365,7 @@ type Model struct {
 	doctorByKey       map[string]domain.CompatibilityReport
 	exportByKey       map[string]domain.ExportManifest
 	installByPath     map[string]SkillInstallResult
-	probeByPath       map[string]MCPProbeResult
+	probeByID         map[string]MCPProbeResult
 	skillTargetByPath map[string]string
 
 	logs []string
@@ -380,7 +402,7 @@ func NewModel(ctx context.Context, backend Backend) Model {
 		doctorByKey:       map[string]domain.CompatibilityReport{},
 		exportByKey:       map[string]domain.ExportManifest{},
 		installByPath:     map[string]SkillInstallResult{},
-		probeByPath:       map[string]MCPProbeResult{},
+		probeByID:         map[string]MCPProbeResult{},
 		skillTargetByPath: map[string]string{},
 		logs:              []string{"workspace boot requested"},
 	}
@@ -457,12 +479,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logs = append(m.logs, fmt.Sprintf("synced skill %s -> %s", msg.skill.Name, shortPath(msg.result.InstalledPath)))
 		return m, tea.Batch(m.loadWorkspaceCmd(), tickCmd())
 	case mcpProbedMsg:
-		m.probeByPath[msg.entry.Path] = msg.result
+		m.probeByID[mcpEntryKey(msg.entry)] = msg.result
 		m.task = taskState{}
 		m.lastErr = nil
 		state := "unreachable"
 		if msg.result.Reachable {
-			state = "config-verified"
+			state = "reachable"
 		}
 		m.logs = append(m.logs, fmt.Sprintf("probed %s: %s", msg.entry.Name, state))
 		return m, nil
@@ -1277,43 +1299,75 @@ func (m Model) renderProjectPreview() string {
 func (m Model) renderMCPPreview() string {
 	item, ok := m.selectedMCP()
 	if !ok {
-		return "Select an MCP profile."
+		return "Select an MCP server."
 	}
-	probe, hasProbe := m.probeByPath[item.Path]
+	probe, hasProbe := m.probeByID[mcpEntryKey(item)]
 	switch m.currentPreviewTab() {
 	case previewRaw:
+		blocks := []string{}
+		for _, decl := range item.Declarations {
+			if strings.TrimSpace(decl.RawConfig) == "" {
+				continue
+			}
+			header := fmt.Sprintf("# %s | %s | %s", firstNonEmpty(decl.Scope, decl.Source), firstNonEmpty(decl.Label, filepath.Base(decl.Path)), shortPath(decl.Path))
+			blocks = append(blocks, header, decl.RawConfig)
+		}
+		if len(blocks) > 0 {
+			return strings.Join(blocks, "\n\n")
+		}
 		if strings.TrimSpace(item.RawConfig) == "" {
 			return "Config content unavailable."
 		}
 		return item.RawConfig
 	case previewLive:
 		if !hasProbe {
-			return "No validation result yet. Press p to validate the selected MCP profile."
+			return "No validation result yet. Press p to validate the selected MCP server."
 		}
 		return mustJSON(probe)
 	default:
+		kind := firstNonEmpty(item.Kind, "server")
 		lines := []string{
 			fmt.Sprintf("Name: %s", item.Name),
+			fmt.Sprintf("Kind: %s", kind),
 			fmt.Sprintf("Tool: %s", firstNonEmpty(string(item.Tool), "(shared)")),
+			fmt.Sprintf("Effective scope: %s", firstNonEmpty(item.Scope, "(none)")),
 			fmt.Sprintf("Source: %s", item.Source),
 			fmt.Sprintf("Path: %s", shortPath(item.Path)),
 			fmt.Sprintf("Status: %s", item.Status),
+			fmt.Sprintf("Transport: %s", firstNonEmpty(item.Transport, "(unknown)")),
 			fmt.Sprintf("Format: %s", firstNonEmpty(item.Format, "(unknown)")),
 			fmt.Sprintf("Parse source: %s", firstNonEmpty(item.ParseSource, "(none)")),
-			fmt.Sprintf("Declared servers: %d", item.DeclaredServers),
+			fmt.Sprintf("Declarations: %d", maxInt(len(item.Declarations), item.DeclaredServers)),
 			fmt.Sprintf("Tool binary: %s", boolLabel(item.BinaryFound, firstNonEmpty(item.BinaryPath, "found"), "missing")),
 			fmt.Sprintf("Details: %s", firstNonEmpty(item.Details, "(none)")),
 		}
-		if len(item.ServerNames) > 0 {
-			lines = append(lines, "", "Server Names")
-			for _, name := range item.ServerNames {
-				lines = append(lines, "- "+name)
+		if len(item.HiddenScopes) > 0 {
+			lines = append(lines, "", "Hidden / Overridden")
+			for _, hidden := range item.HiddenScopes {
+				lines = append(lines, "- "+hidden)
 			}
 		}
 		if len(item.ParseWarnings) > 0 {
 			lines = append(lines, "", "Parse Warnings")
 			for _, warning := range item.ParseWarnings {
 				lines = append(lines, "- "+warning)
+			}
+		}
+		if len(item.Declarations) > 0 {
+			lines = append(lines, "", "Declarations")
+			for i, decl := range item.Declarations {
+				prefix := "hidden"
+				if i == 0 {
+					prefix = "effective"
+				}
+				summary := fmt.Sprintf("- %s | %s | %s | %s", prefix, firstNonEmpty(decl.Scope, decl.Source), firstNonEmpty(decl.Label, "(config)"), shortPath(decl.Path))
+				if decl.Server.Name != "" {
+					summary += fmt.Sprintf(" | transport=%s", firstNonEmpty(decl.Server.Transport, "stdio"))
+				}
+				lines = append(lines, summary)
+				for _, warning := range decl.ParseWarnings {
+					lines = append(lines, "  warning: "+warning)
+				}
 			}
 		}
 		if hasProbe {
@@ -1700,17 +1754,37 @@ func (m Model) filteredSkills() []SkillEntry {
 func (m Model) filteredMCP() []MCPEntry {
 	items := make([]MCPEntry, 0, len(m.snapshot.MCPProfiles))
 	for _, item := range m.snapshot.MCPProfiles {
-		if !m.matchesActiveProjectPath(item.Path) {
+		if len(item.Declarations) == 0 && !m.matchesActiveProjectPath(item.Path) {
 			continue
 		}
-		if !matchesQuery(m.searchQuery, item.Name, item.Path, item.Source, item.Status, item.Details, string(item.Tool), strings.Join(item.ServerNames, " ")) {
+		resolved, ok := m.resolveMCPEntry(item)
+		if !ok {
 			continue
 		}
-		items = append(items, item)
+		if !matchesQuery(
+			m.searchQuery,
+			resolved.Name,
+			resolved.Path,
+			resolved.Source,
+			resolved.Scope,
+			resolved.Status,
+			resolved.Details,
+			resolved.Transport,
+			string(resolved.Tool),
+			strings.Join(resolved.HiddenScopes, " "),
+			strings.Join(resolved.ServerNames, " "),
+			strings.Join(m.mcpDeclarationSearchTerms(resolved.Declarations), " "),
+		) {
+			continue
+		}
+		items = append(items, resolved)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].Tool == items[j].Tool {
-			return items[i].Path < items[j].Path
+			if items[i].Name == items[j].Name {
+				return items[i].Path < items[j].Path
+			}
+			return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
 		}
 		return items[i].Tool < items[j].Tool
 	})
@@ -1879,10 +1953,16 @@ func (m Model) mcpListItem(item MCPEntry) listItem {
 	if item.Tool != "" {
 		badges = append(badges, badge{label: strings.ToUpper(string(item.Tool)), tone: "accent"})
 	}
-	if len(item.ServerNames) > 0 {
-		badges = append(badges, badge{label: fmt.Sprintf("%d SRV", len(item.ServerNames)), tone: "muted"})
+	if item.Scope != "" {
+		badges = append(badges, badge{label: strings.ToUpper(item.Scope), tone: "muted"})
 	}
-	if probe, ok := m.probeByPath[item.Path]; ok {
+	if item.Transport != "" {
+		badges = append(badges, badge{label: strings.ToUpper(item.Transport), tone: "muted"})
+	}
+	if len(item.Declarations) > 1 {
+		badges = append(badges, badge{label: fmt.Sprintf("%d DEF", len(item.Declarations)), tone: "warning"})
+	}
+	if probe, ok := m.probeByID[mcpEntryKey(item)]; ok {
 		label := "PROBED"
 		tone = "warning"
 		if probe.Reachable {
@@ -1992,6 +2072,193 @@ func (m Model) matchesActiveProjectSession(item sessionItem) bool {
 		return samePath(root, m.activeProjectRoot)
 	}
 	return samePath(m.projectRootForPath(item.Session.StoragePath), m.activeProjectRoot)
+}
+
+func (m Model) resolveMCPEntry(item MCPEntry) (MCPEntry, bool) {
+	resolved := item
+	resolved.ID = mcpEntryKey(item)
+	if len(item.Declarations) == 0 {
+		if resolved.Kind == "" {
+			if len(resolved.Servers) > 0 {
+				resolved.Kind = "server"
+			} else {
+				resolved.Kind = "config"
+			}
+		}
+		if resolved.Transport == "" && len(resolved.Servers) > 0 {
+			resolved.Transport = firstNonEmpty(resolved.Servers[0].Transport, "stdio")
+		}
+		return resolved, true
+	}
+
+	declarations := m.relevantMCPDeclarations(item)
+	if len(declarations) == 0 {
+		return MCPEntry{}, false
+	}
+	sort.SliceStable(declarations, func(i, j int) bool {
+		if mcpScopeRank(declarations[i].Scope) == mcpScopeRank(declarations[j].Scope) {
+			if declarations[i].Path == declarations[j].Path {
+				return declarations[i].Label < declarations[j].Label
+			}
+			return declarations[i].Path < declarations[j].Path
+		}
+		return mcpScopeRank(declarations[i].Scope) < mcpScopeRank(declarations[j].Scope)
+	})
+
+	effective := declarations[0]
+	resolved.Declarations = declarations
+	resolved.Path = effective.Path
+	resolved.Source = effective.Source
+	resolved.Scope = effective.Scope
+	resolved.Status = firstNonEmpty(effective.Status, resolved.Status)
+	resolved.Details = firstNonEmpty(effective.Details, resolved.Details)
+	resolved.Format = firstNonEmpty(effective.Format, resolved.Format)
+	resolved.ParseSource = firstNonEmpty(effective.ParseSource, resolved.ParseSource)
+	resolved.RawConfig = firstNonEmpty(effective.RawConfig, resolved.RawConfig)
+	resolved.ParseWarnings = dedupeText(append(collectMCPDeclarationWarnings(declarations), resolved.ParseWarnings...))
+	resolved.BinaryFound = effective.BinaryFound
+	resolved.BinaryPath = firstNonEmpty(effective.BinaryPath, resolved.BinaryPath)
+	resolved.Transport = firstNonEmpty(effective.Server.Transport, resolved.Transport)
+	if resolved.Kind == "" {
+		if effective.Server.Name != "" {
+			resolved.Kind = "server"
+		} else {
+			resolved.Kind = "config"
+		}
+	}
+	if resolved.Name == "" {
+		resolved.Name = firstNonEmpty(effective.Server.Name, filepath.Base(effective.Path))
+	}
+	if resolved.Kind == "server" && effective.Server.Name != "" {
+		resolved.Servers = []MCPServerConfig{effective.Server}
+		resolved.ServerNames = []string{effective.Server.Name}
+		resolved.DeclaredServers = len(declarations)
+		if resolved.Details == "" {
+			resolved.Details = fmt.Sprintf("%s declaration in %s", firstNonEmpty(effective.Scope, effective.Source), shortPath(effective.Path))
+		}
+	} else {
+		resolved.Servers = nil
+		resolved.ServerNames = nil
+		resolved.DeclaredServers = len(declarations)
+	}
+
+	hidden := []string{}
+	for i, decl := range declarations {
+		if i == 0 {
+			continue
+		}
+		hidden = append(hidden, fmt.Sprintf("%s %s", firstNonEmpty(decl.Scope, decl.Source), shortPath(decl.Path)))
+	}
+	resolved.HiddenScopes = dedupeText(hidden)
+	if !resolved.BinaryFound {
+		for _, decl := range declarations {
+			if decl.BinaryFound {
+				resolved.BinaryFound = true
+				resolved.BinaryPath = decl.BinaryPath
+				break
+			}
+		}
+	}
+	if strings.TrimSpace(m.activeProjectRoot) == "" && mcpHasMultipleProjectScopes(declarations, m.projectRootForPath) {
+		resolved.ParseWarnings = dedupeText(append(resolved.ParseWarnings, "effective declaration varies by project scope"))
+	}
+	if resolved.Status == "" {
+		resolved.Status = "configured"
+	}
+	return resolved, true
+}
+
+func (m Model) relevantMCPDeclarations(item MCPEntry) []MCPDeclaration {
+	if len(item.Declarations) == 0 {
+		return nil
+	}
+	out := make([]MCPDeclaration, 0, len(item.Declarations))
+	for _, decl := range item.Declarations {
+		if strings.TrimSpace(m.activeProjectRoot) == "" {
+			out = append(out, decl)
+			continue
+		}
+		switch decl.Scope {
+		case "project", "local":
+			if samePath(m.projectRootForPath(decl.Path), m.activeProjectRoot) {
+				out = append(out, decl)
+			}
+		default:
+			out = append(out, decl)
+		}
+	}
+	return out
+}
+
+func (m Model) mcpDeclarationSearchTerms(declarations []MCPDeclaration) []string {
+	terms := make([]string, 0, len(declarations)*6)
+	for _, decl := range declarations {
+		terms = append(
+			terms,
+			decl.Path,
+			decl.Source,
+			decl.Scope,
+			decl.Label,
+			decl.Server.Transport,
+			decl.Server.Command,
+			decl.Server.URL,
+		)
+		terms = append(terms, decl.ParseWarnings...)
+	}
+	return terms
+}
+
+func mcpScopeRank(scope string) int {
+	switch strings.TrimSpace(strings.ToLower(scope)) {
+	case "local":
+		return 0
+	case "project":
+		return 1
+	case "user":
+		return 2
+	case "global":
+		return 3
+	case "legacy":
+		return 4
+	default:
+		return 5
+	}
+}
+
+func mcpHasMultipleProjectScopes(declarations []MCPDeclaration, projectRootForPath func(string) string) bool {
+	roots := map[string]struct{}{}
+	for _, decl := range declarations {
+		switch decl.Scope {
+		case "project", "local":
+			if root := projectRootForPath(decl.Path); root != "" {
+				roots[root] = struct{}{}
+			}
+		}
+	}
+	return len(roots) > 1
+}
+
+func collectMCPDeclarationWarnings(declarations []MCPDeclaration) []string {
+	warnings := []string{}
+	for _, decl := range declarations {
+		for _, warning := range decl.ParseWarnings {
+			prefix := firstNonEmpty(decl.Scope, decl.Source)
+			warnings = append(warnings, strings.TrimSpace(prefix+": "+warning))
+		}
+	}
+	return warnings
+}
+
+func mcpEntryKey(item MCPEntry) string {
+	if strings.TrimSpace(item.ID) != "" {
+		return item.ID
+	}
+	return strings.Join([]string{
+		firstNonEmpty(string(item.Tool), "shared"),
+		firstNonEmpty(item.Kind, "config"),
+		firstNonEmpty(item.Name, filepath.Base(item.Path)),
+		filepath.Clean(firstNonEmpty(item.Path, item.Name)),
+	}, "|")
 }
 
 func (m *Model) moveSkillTarget(delta int) {
@@ -2760,6 +3027,26 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func dedupeText(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func boolLabel(ok bool, truthy string, falsy string) string {
