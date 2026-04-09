@@ -10,48 +10,35 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jaeyoung0509/work-bridge/internal/detect"
-	"github.com/jaeyoung0509/work-bridge/internal/doctor"
-	"github.com/jaeyoung0509/work-bridge/internal/domain"
-	"github.com/jaeyoung0509/work-bridge/internal/exporter"
-	"github.com/jaeyoung0509/work-bridge/internal/importer"
-	"github.com/jaeyoung0509/work-bridge/internal/tui"
+	"github.com/jaeyoung0509/work-bridge/internal/switcher"
+	"github.com/jaeyoung0509/work-bridge/internal/switchui"
 )
 
 func (a *App) runRoot(cmd *cobra.Command, _ []string) error {
 	if !shouldLaunchTUI(a.stdout, a.stderr) {
-		return a.runHeadlessOverview(cmd.OutOrStdout())
+		return cmd.Help()
 	}
 
-	backend := tui.Backend{
-		LoadWorkspaceSnapshot: a.loadWorkspaceSnapshot,
-		ImportSession: func(ctx context.Context, tool domain.Tool, session string) (domain.SessionBundle, error) {
-			cwd, homeDir, err := a.resolveWorkingDirs()
-			if err != nil {
-				return domain.SessionBundle{}, err
-			}
-			return importer.Import(a.importerOptions(cwd, homeDir, string(tool), session))
-		},
-		DoctorBundle: func(ctx context.Context, bundle domain.SessionBundle, target domain.Tool) (domain.CompatibilityReport, error) {
-			return doctor.Analyze(doctor.Options{Bundle: bundle, Target: target})
-		},
-		ExportBundle: func(ctx context.Context, bundle domain.SessionBundle, target domain.Tool, outDir string) (domain.ExportManifest, error) {
-			report, err := doctor.Analyze(doctor.Options{Bundle: bundle, Target: target})
-			if err != nil {
-				return domain.ExportManifest{}, err
-			}
-			return exporter.Export(exporter.Options{
-				FS:     a.fs,
-				Bundle: bundle,
-				Report: report,
-				OutDir: outDir,
-			})
-		},
-		InstallSkill:     a.installSkillFromTUI,
-		ProbeMCP:         a.probeMCPFromTUI,
-		DefaultExportDir: a.config.Output.ExportDir,
+	cwd, homeDir, err := a.resolveWorkingDirs()
+	if err != nil {
+		return err
 	}
-
-	return tui.Run(cmd.Context(), backend, os.Stdout, os.Stderr)
+	service := switcher.New(switcher.Options{
+		FS:        a.fs,
+		CWD:       cwd,
+		HomeDir:   homeDir,
+		ToolPaths: a.config.Paths,
+		Redaction: a.config.Redaction,
+		LookPath:  a.look,
+		Now:       a.clock.Now,
+	})
+	backend := switchui.Backend{
+		LoadWorkspace: service.LoadWorkspace,
+		Preview:       service.Preview,
+		Apply:         service.Apply,
+		Export:        service.Export,
+	}
+	return switchui.Run(cmd.Context(), backend, os.Stdout, os.Stderr)
 }
 
 func (a *App) runHeadlessOverview(out io.Writer) error {
