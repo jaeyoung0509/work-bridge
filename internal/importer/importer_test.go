@@ -3,6 +3,7 @@ package importer
 import (
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
@@ -64,8 +65,51 @@ func TestImportCodexLatest(t *testing.T) {
 	if len(bundle.ToolEvents) != 1 || bundle.ToolEvents[0].Type != "tool_call" {
 		t.Fatalf("expected tool event, got %#v", bundle.ToolEvents)
 	}
+	if !slices.Contains(bundle.TouchedFiles, "README.md") {
+		t.Fatalf("expected touched file from codex tool call, got %#v", bundle.TouchedFiles)
+	}
 	if bundle.TokenStats["total_tokens"] != 15 {
 		t.Fatalf("expected token stats, got %#v", bundle.TokenStats)
+	}
+}
+
+func TestImportCodexScalarJSONArgumentsDoNotOverflow(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	cwd := filepath.Join(root, "repo")
+
+	mkdirAll(t, filepath.Join(cwd, ".git"))
+	writeFile(t, filepath.Join(homeDir, ".codex", "session_index.jsonl"),
+		`{"id":"codex-session","thread_name":"codex task","updated_at":"2026-04-07T15:00:00Z"}`+"\n")
+	writeFile(t, filepath.Join(homeDir, ".codex", "sessions", "2026", "04", "07", "rollout-2026-04-07T15-00-00-codex-session.jsonl"), ""+
+		`{"timestamp":"2026-04-07T14:59:00Z","type":"session_meta","payload":{"id":"codex-session","timestamp":"2026-04-07T14:59:00Z","cwd":"/workspace/codex"}}`+"\n"+
+		`{"timestamp":"2026-04-07T15:00:00Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"false","call_id":"call_1"}}`+"\n")
+
+	bundle, err := Import(Options{
+		FS:         fsx.OSFS{},
+		CWD:        cwd,
+		HomeDir:    homeDir,
+		Tool:       "codex",
+		Session:    "latest",
+		ImportedAt: "2026-04-07T16:00:00Z",
+		LookPath: func(binary string) (string, error) {
+			if binary == "codex" {
+				return "/opt/bin/codex", nil
+			}
+			return "", errors.New("not found")
+		},
+	})
+	if err != nil {
+		t.Fatalf("import failed: %v", err)
+	}
+
+	if len(bundle.ToolEvents) != 1 {
+		t.Fatalf("expected tool event, got %#v", bundle.ToolEvents)
+	}
+	if len(bundle.TouchedFiles) != 0 {
+		t.Fatalf("expected scalar JSON arguments to produce no touched files, got %#v", bundle.TouchedFiles)
 	}
 }
 

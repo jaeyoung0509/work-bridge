@@ -91,7 +91,14 @@ func extractTouchedFilesRecursive(parentKey string, value any) []string {
 		if err := json.Unmarshal(data, &generic); err != nil {
 			return nil
 		}
-		return extractTouchedFilesRecursive(parentKey, generic)
+		switch generic := generic.(type) {
+		case map[string]any, []any:
+			return extractTouchedFilesRecursive(parentKey, generic)
+		case string:
+			return pathCandidates(parentKey, generic)
+		default:
+			return nil
+		}
 	}
 }
 
@@ -112,7 +119,7 @@ func pathCandidates(key string, value string) []string {
 		return []string{filepath.Clean(value)}
 	}
 
-	if json.Valid([]byte(value)) {
+	if looksLikeJSONContainer(value) && json.Valid([]byte(value)) {
 		var nested any
 		if err := json.Unmarshal([]byte(value), &nested); err == nil {
 			return extractTouchedFilesRecursive(key, nested)
@@ -133,6 +140,11 @@ func looksLikePathKey(key string) bool {
 		}
 	}
 	return false
+}
+
+func looksLikeJSONContainer(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[")
 }
 
 func looksLikeFilePath(value string) bool {
