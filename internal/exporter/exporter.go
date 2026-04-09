@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -26,6 +27,9 @@ func Export(opts Options) (domain.ExportManifest, error) {
 	if opts.OutDir == "" {
 		return domain.ExportManifest{}, errors.New("out_dir is required")
 	}
+	if opts.Bundle.AssetKind == "" {
+		opts.Bundle.AssetKind = domain.AssetKindSession
+	}
 	if err := opts.Bundle.Validate(); err != nil {
 		return domain.ExportManifest{}, err
 	}
@@ -39,6 +43,11 @@ func Export(opts Options) (domain.ExportManifest, error) {
 		fileNames = append(fileNames, name)
 	}
 	sort.Strings(fileNames)
+	expectedArtifacts := append([]string{}, opts.Report.GeneratedArtifacts...)
+	sort.Strings(expectedArtifacts)
+	if !slices.Equal(fileNames, expectedArtifacts) {
+		return domain.ExportManifest{}, fmt.Errorf("generated artifact mismatch: report=%v exporter=%v", expectedArtifacts, fileNames)
+	}
 
 	if err := opts.FS.MkdirAll(opts.OutDir, 0o755); err != nil {
 		return domain.ExportManifest{}, err
@@ -51,6 +60,7 @@ func Export(opts Options) (domain.ExportManifest, error) {
 	}
 
 	manifest := domain.ExportManifest{
+		AssetKind:         opts.Bundle.AssetKind,
 		BundleID:          opts.Bundle.BundleID,
 		SourceTool:        opts.Bundle.SourceTool,
 		SourceSessionID:   opts.Bundle.SourceSessionID,

@@ -16,14 +16,9 @@ func (a *App) runInspect(cmd *cobra.Command, args []string) error {
 		return newExitError(ExitUsage, fmt.Sprintf("unsupported tool %q (expected codex, gemini, or claude)", args[0]))
 	}
 
-	cwd, err := a.getwd()
+	cwd, homeDir, err := a.resolveWorkingDirs()
 	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-
-	homeDir, err := a.home()
-	if err != nil {
-		return fmt.Errorf("resolve home directory: %w", err)
+		return err
 	}
 
 	limit, err := cmd.Flags().GetInt("limit")
@@ -32,12 +27,13 @@ func (a *App) runInspect(cmd *cobra.Command, args []string) error {
 	}
 
 	report, err := inspect.Run(inspect.Options{
-		FS:       a.fs,
-		CWD:      cwd,
-		HomeDir:  homeDir,
-		Tool:     args[0],
-		LookPath: a.look,
-		Limit:    limit,
+		FS:        a.fs,
+		CWD:       cwd,
+		HomeDir:   homeDir,
+		ToolPaths: a.config.Paths,
+		Tool:      args[0],
+		LookPath:  a.look,
+		Limit:     limit,
 	})
 	if err != nil {
 		return err

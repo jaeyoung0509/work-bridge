@@ -15,6 +15,7 @@ const (
 )
 
 type SessionBundle struct {
+	AssetKind            AssetKind             `json:"asset_kind"`
 	BundleVersion        string                `json:"bundle_version"`
 	BundleID             string                `json:"bundle_id,omitempty"`
 	SourceTool           Tool                  `json:"source_tool"`
@@ -75,6 +76,7 @@ type Failure struct {
 
 func NewSessionBundle(tool Tool, projectRoot string) SessionBundle {
 	return SessionBundle{
+		AssetKind:            AssetKindSession,
 		BundleVersion:        BundleV0,
 		SourceTool:           tool,
 		ProjectRoot:          projectRoot,
@@ -96,6 +98,15 @@ func NewSessionBundle(tool Tool, projectRoot string) SessionBundle {
 }
 
 func (b SessionBundle) Validate() error {
+	if b.AssetKind == "" {
+		return errors.New("asset_kind is required")
+	}
+	if !b.AssetKind.IsKnown() {
+		return fmt.Errorf("unsupported asset_kind %q", b.AssetKind)
+	}
+	if b.AssetKind != AssetKindSession {
+		return fmt.Errorf("session bundle must use asset_kind %q", AssetKindSession)
+	}
 	if b.BundleVersion == "" {
 		return errors.New("bundle_version is required")
 	}

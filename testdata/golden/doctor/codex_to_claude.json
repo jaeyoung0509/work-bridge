@@ -1,4 +1,5 @@
 {
+  "asset_kind": "session",
   "bundle_id": "bundle-codex-session",
   "source_tool": "codex",
   "source_session_id": "codex-session",
@@ -17,7 +18,8 @@
     "settings_snapshot",
     "token_stats",
     "tool_events",
-    "tool_outputs"
+    "tool_outputs",
+    "touched_files"
   ],
   "unsupported_fields": [
     "hidden_reasoning",

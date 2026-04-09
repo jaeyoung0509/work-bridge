@@ -13,16 +13,18 @@ import (
 	"time"
 
 	"sessionport/internal/detect"
+	"sessionport/internal/domain"
 	"sessionport/internal/platform/fsx"
 )
 
 type Options struct {
-	FS       fsx.FS
-	CWD      string
-	HomeDir  string
-	Tool     string
-	LookPath func(string) (string, error)
-	Limit    int
+	FS        fsx.FS
+	CWD       string
+	HomeDir   string
+	ToolPaths domain.ToolPaths
+	Tool      string
+	LookPath  func(string) (string, error)
+	Limit     int
 }
 
 type Report struct {
@@ -71,10 +73,11 @@ func Run(opts Options) (Report, error) {
 	}
 
 	detectReport, err := detect.Run(detect.Options{
-		FS:       opts.FS,
-		CWD:      opts.CWD,
-		HomeDir:  opts.HomeDir,
-		LookPath: opts.LookPath,
+		FS:        opts.FS,
+		CWD:       opts.CWD,
+		HomeDir:   opts.HomeDir,
+		ToolPaths: opts.ToolPaths,
+		LookPath:  opts.LookPath,
 	})
 	if err != nil {
 		return Report{}, err
@@ -137,14 +140,15 @@ func Run(opts Options) (Report, error) {
 }
 
 func inspectCodex(opts Options) ([]Session, []string, error) {
-	indexPath := filepath.Join(opts.HomeDir, ".codex", "session_index.jsonl")
+	codexDir := opts.ToolPaths.Dir(domain.ToolCodex, opts.HomeDir)
+	indexPath := filepath.Join(codexDir, "session_index.jsonl")
 	if !pathExists(opts.FS, indexPath) {
 		return []Session{}, []string{
 			"No Codex session_index.jsonl file was found. Session inventory is unavailable on this machine.",
 		}, nil
 	}
 
-	pathMap, err := codexSessionPathMap(opts.FS, filepath.Join(opts.HomeDir, ".codex", "sessions"))
+	pathMap, err := codexSessionPathMap(opts.FS, filepath.Join(codexDir, "sessions"))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -200,7 +204,8 @@ func inspectCodex(opts Options) ([]Session, []string, error) {
 }
 
 func inspectGemini(opts Options) ([]Session, []string, error) {
-	projectsPath := filepath.Join(opts.HomeDir, ".gemini", "projects.json")
+	geminiDir := opts.ToolPaths.Dir(domain.ToolGemini, opts.HomeDir)
+	projectsPath := filepath.Join(geminiDir, "projects.json")
 	type projectsFile struct {
 		Projects map[string]string `json:"projects"`
 	}
@@ -215,7 +220,7 @@ func inspectGemini(opts Options) ([]Session, []string, error) {
 		aliasToProject[alias] = projectRoot
 	}
 
-	files, err := listFilesRecursive(opts.FS, filepath.Join(opts.HomeDir, ".gemini", "tmp"))
+	files, err := listFilesRecursive(opts.FS, filepath.Join(geminiDir, "tmp"))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -285,7 +290,8 @@ func inspectGemini(opts Options) ([]Session, []string, error) {
 }
 
 func inspectClaude(opts Options) ([]Session, []string, error) {
-	historyPath := filepath.Join(opts.HomeDir, ".claude", "history.jsonl")
+	claudeDir := opts.ToolPaths.Dir(domain.ToolClaude, opts.HomeDir)
+	historyPath := filepath.Join(claudeDir, "history.jsonl")
 	if !pathExists(opts.FS, historyPath) {
 		return []Session{}, []string{
 			"No Claude history.jsonl file was found. Session inventory is unavailable on this machine.",

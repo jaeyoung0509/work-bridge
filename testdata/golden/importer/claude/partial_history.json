@@ -1,4 +1,5 @@
 {
+  "asset_kind": "session",
   "bundle_version": "v0",
   "bundle_id": "bundle-claude-session",
   "source_tool": "claude",
@@ -31,9 +32,9 @@
   "decisions": [],
   "failures": [],
   "resume_hints": [
+    "history_entries=2",
     "source_history_path=$HOME/.claude/history.jsonl",
-    "source_tool=claude",
-    "history_entries=2"
+    "source_tool=claude"
   ],
   "token_stats": {},
   "provenance": [
@@ -41,7 +42,9 @@
     "Session inventory comes from ~/.claude/history.jsonl. This is a best-effort history-based view, not a full raw session export.",
     "claude.history_entries=2"
   ],
-  "redactions": [],
+  "redactions": [
+    "settings.apiKey"
+  ],
   "warnings": [
     "Claude import is history-based. Raw transcript, tool events, and token usage were not available from local session storage."
   ]

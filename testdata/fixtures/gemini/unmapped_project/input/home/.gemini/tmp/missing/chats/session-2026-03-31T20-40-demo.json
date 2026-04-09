@@ -1,0 +1,16 @@
+{
+  "sessionId": "gemini-unmapped",
+  "startTime": "2026-03-31T20:40:44Z",
+  "lastUpdated": "2026-03-31T20:40:56Z",
+  "messages": [
+    {
+      "type": "user",
+      "timestamp": "2026-03-31T20:40:44Z",
+      "content": [
+        {
+          "text": "recover project root from cwd"
+        }
+      ]
+    }
+  ]
+}

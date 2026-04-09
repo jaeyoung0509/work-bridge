@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"sessionport/internal/domain"
 	"sessionport/internal/platform/archivex"
 	"sessionport/internal/platform/clockx"
 	"sessionport/internal/platform/fsx"
@@ -23,6 +24,16 @@ type Config struct {
 	ConfigFile string `mapstructure:"config"`
 	Format     string `mapstructure:"format"`
 	Verbose    bool   `mapstructure:"verbose"`
+	Paths      domain.ToolPaths
+	Output     OutputConfig
+	Redaction  domain.RedactionPolicy
+}
+
+type OutputConfig struct {
+	ImportBundlePath string `mapstructure:"import_bundle_path"`
+	ExportDir        string `mapstructure:"export_dir"`
+	PackagePath      string `mapstructure:"package_path"`
+	UnpackDir        string `mapstructure:"unpack_dir"`
 }
 
 type App struct {
@@ -53,8 +64,10 @@ func New(stdout io.Writer, stderr io.Writer) *App {
 
 	v := viper.New()
 	v.SetEnvPrefix("SESSIONPORT")
-	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 	v.AutomaticEnv()
+	v.SetDefault("format", "text")
+	v.SetDefault("redaction.detect_sensitive_values", true)
 
 	return &App{
 		stdout: stdout,
@@ -123,6 +136,21 @@ func (a *App) initConfig(cmd *cobra.Command) error {
 		ConfigFile: configPath,
 		Format:     a.viper.GetString("format"),
 		Verbose:    a.viper.GetBool("verbose"),
+		Paths: domain.ToolPaths{
+			Codex:  a.viper.GetString("paths.codex"),
+			Gemini: a.viper.GetString("paths.gemini"),
+			Claude: a.viper.GetString("paths.claude"),
+		},
+		Output: OutputConfig{
+			ImportBundlePath: a.viper.GetString("output.import_bundle_path"),
+			ExportDir:        a.viper.GetString("output.export_dir"),
+			PackagePath:      a.viper.GetString("output.package_path"),
+			UnpackDir:        a.viper.GetString("output.unpack_dir"),
+		},
+		Redaction: domain.RedactionPolicy{
+			AdditionalSensitiveKeys: a.viper.GetStringSlice("redaction.additional_sensitive_keys"),
+			DetectSensitiveValues:   a.viper.GetBool("redaction.detect_sensitive_values"),
+		},
 	}
 
 	switch a.config.Format {

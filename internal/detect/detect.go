@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"sessionport/internal/domain"
 	"sessionport/internal/platform/fsx"
 )
 
@@ -39,10 +40,11 @@ type ArtifactProbe struct {
 }
 
 type Options struct {
-	FS       fsx.FS
-	CWD      string
-	HomeDir  string
-	LookPath func(string) (string, error)
+	FS        fsx.FS
+	CWD       string
+	HomeDir   string
+	ToolPaths domain.ToolPaths
+	LookPath  func(string) (string, error)
 }
 
 func Run(opts Options) (Report, error) {
@@ -73,10 +75,11 @@ func Run(opts Options) (Report, error) {
 }
 
 func detectCodex(opts Options, ancestors []string) ToolReport {
+	codexDir := opts.ToolPaths.Dir(domain.ToolCodex, opts.HomeDir)
 	artifacts := []ArtifactProbe{
-		probeFile(opts.FS, "config.toml", "config", "user", filepath.Join(opts.HomeDir, ".codex", "config.toml")),
-		probeFile(opts.FS, "AGENTS.md", "instruction", "user", filepath.Join(opts.HomeDir, ".codex", "AGENTS.md")),
-		probeFile(opts.FS, "AGENTS.override.md", "instruction", "user", filepath.Join(opts.HomeDir, ".codex", "AGENTS.override.md")),
+		probeFile(opts.FS, "config.toml", "config", "user", filepath.Join(codexDir, "config.toml")),
+		probeFile(opts.FS, "AGENTS.md", "instruction", "user", filepath.Join(codexDir, "AGENTS.md")),
+		probeFile(opts.FS, "AGENTS.override.md", "instruction", "user", filepath.Join(codexDir, "AGENTS.override.md")),
 	}
 
 	for _, dir := range ancestors {
@@ -92,9 +95,10 @@ func detectCodex(opts Options, ancestors []string) ToolReport {
 }
 
 func detectGemini(opts Options, projectRoot string, ancestors []string) ToolReport {
+	geminiDir := opts.ToolPaths.Dir(domain.ToolGemini, opts.HomeDir)
 	artifacts := []ArtifactProbe{
-		probeFile(opts.FS, "settings.json", "config", "user", filepath.Join(opts.HomeDir, ".gemini", "settings.json")),
-		probeFile(opts.FS, "GEMINI.md", "instruction", "user", filepath.Join(opts.HomeDir, ".gemini", "GEMINI.md")),
+		probeFile(opts.FS, "settings.json", "config", "user", filepath.Join(geminiDir, "settings.json")),
+		probeFile(opts.FS, "GEMINI.md", "instruction", "user", filepath.Join(geminiDir, "GEMINI.md")),
 		probeFile(opts.FS, "settings.json", "config", "project", filepath.Join(projectRoot, ".gemini", "settings.json")),
 	}
 
@@ -108,9 +112,10 @@ func detectGemini(opts Options, projectRoot string, ancestors []string) ToolRepo
 }
 
 func detectClaude(opts Options, projectRoot string, ancestors []string) ToolReport {
+	claudeDir := opts.ToolPaths.Dir(domain.ToolClaude, opts.HomeDir)
 	artifacts := []ArtifactProbe{
-		probeFile(opts.FS, "settings.json", "config", "user", filepath.Join(opts.HomeDir, ".claude", "settings.json")),
-		probeFile(opts.FS, "CLAUDE.md", "instruction", "user", filepath.Join(opts.HomeDir, ".claude", "CLAUDE.md")),
+		probeFile(opts.FS, "settings.json", "config", "user", filepath.Join(claudeDir, "settings.json")),
+		probeFile(opts.FS, "CLAUDE.md", "instruction", "user", filepath.Join(claudeDir, "CLAUDE.md")),
 		probeFile(opts.FS, "settings.json", "config", "project", filepath.Join(projectRoot, ".claude", "settings.json")),
 		probeFile(opts.FS, "settings.local.json", "config", "local", filepath.Join(projectRoot, ".claude", "settings.local.json")),
 	}
