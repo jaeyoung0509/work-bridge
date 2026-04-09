@@ -19,8 +19,8 @@ The default entrypoint is a Bubble Tea TUI. Legacy CLI commands remain available
 ## Current TUI Scope
 
 - `Sessions`: inspect, import, doctor, export
-- `Projects`: index project roots from configured workspace roots
-- `Skills`: inspect and install into the current project
+- `Projects`: index project roots from configured workspace roots and drive active workspace scope
+- `Skills`: inspect grouped skills, compare project/user/global coverage, and sync across scopes
 - `MCP`: inspect known config locations and run runtime stdio validation
 - `Logs`: recent workspace actions and errors
 

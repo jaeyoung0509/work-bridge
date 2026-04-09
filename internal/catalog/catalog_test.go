@@ -43,6 +43,33 @@ func TestScanProjectsFindsProjectsUnderWorkspaceRoots(t *testing.T) {
 	}
 }
 
+func TestScanSkillsClassifiesScopeAndTool(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	cwd := filepath.Join(root, "repo")
+
+	writeFile(t, filepath.Join(cwd, "skills", "project-helper", "SKILL.md"), "# project-helper")
+	writeFile(t, filepath.Join(homeDir, ".codex", "skills", "frontend-design", "SKILL.md"), "# frontend-design")
+	writeFile(t, filepath.Join(homeDir, ".local", "share", "opencode", "skills", "legacy-helper", "SKILL.md"), "# legacy-helper")
+
+	skills, err := ScanSkills(fsx.OSFS{}, cwd, homeDir)
+	if err != nil {
+		t.Fatalf("scan skills failed: %v", err)
+	}
+
+	if !containsSkill(skills, "project-helper", "project", "") {
+		t.Fatalf("expected project scope skill, got %#v", skills)
+	}
+	if !containsSkill(skills, "frontend-design", "user", "codex") {
+		t.Fatalf("expected codex user skill, got %#v", skills)
+	}
+	if !containsSkill(skills, "legacy-helper", "global", "opencode") {
+		t.Fatalf("expected opencode global skill, got %#v", skills)
+	}
+}
+
 func containsProject(projects []ProjectEntry, root string, markers ...string) bool {
 	for _, project := range projects {
 		if project.Root != root {
@@ -54,6 +81,15 @@ func containsProject(projects []ProjectEntry, root string, markers ...string) bo
 			}
 		}
 		return true
+	}
+	return false
+}
+
+func containsSkill(skills []SkillEntry, name string, scope string, tool string) bool {
+	for _, skill := range skills {
+		if skill.Name == name && skill.Scope == scope && skill.Tool == tool {
+			return true
+		}
 	}
 	return false
 }

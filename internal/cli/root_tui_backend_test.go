@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeyoung0509/work-bridge/internal/catalog"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/inspect"
 	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 	"github.com/jaeyoung0509/work-bridge/internal/tui"
 )
@@ -33,16 +35,25 @@ func TestInstallSkillFromTUICopiesSkillTree(t *testing.T) {
 	app.getwd = func() (string, error) { return cwd, nil }
 	app.home = func() (string, error) { return homeDir, nil }
 
+	target := tui.SkillTarget{
+		ID:    "project:" + cwd,
+		Label: "project",
+		Scope: "project",
+		Path:  filepath.Join(cwd, "skills", "frontend-design", "SKILL.md"),
+	}
 	result, err := app.installSkillFromTUI(context.Background(), tui.SkillEntry{
 		Name: "frontend-design",
 		Path: filepath.Join(srcDir, "SKILL.md"),
-	})
+	}, target)
 	if err != nil {
 		t.Fatalf("install skill failed: %v", err)
 	}
 
 	if got := result.InstalledPath; got != filepath.Join(cwd, "skills", "frontend-design", "SKILL.md") {
 		t.Fatalf("unexpected installed path %q", got)
+	}
+	if result.TargetScope != "project" || result.TargetLabel != "project" {
+		t.Fatalf("expected target metadata in result, got %#v", result)
 	}
 
 	for _, want := range []string{
@@ -161,6 +172,78 @@ func TestResolveWorkspaceRootsPrefersConfiguredRoots(t *testing.T) {
 	}
 	if roots[0] != homeRoot && roots[1] != homeRoot {
 		t.Fatalf("expected home root resolution, got %#v", roots)
+	}
+}
+
+func TestEnrichProjectEntriesTracksSessionCountsByTool(t *testing.T) {
+	t.Parallel()
+
+	projects := []catalog.ProjectEntry{
+		{Name: "repo", Root: "/workspace/repo", WorkspaceRoot: "/workspace"},
+		{Name: "service", Root: "/workspace/repo/service", WorkspaceRoot: "/workspace"},
+	}
+	snapshot := tui.WorkspaceSnapshot{
+		InspectByTool: map[domain.Tool]inspect.Report{
+			domain.ToolCodex: {
+				Tool: "codex",
+				Sessions: []inspect.Session{
+					{ID: "root", ProjectRoot: "/workspace/repo"},
+					{ID: "nested", ProjectRoot: "/workspace/repo/service"},
+				},
+			},
+			domain.ToolClaude: {
+				Tool: "claude",
+				Sessions: []inspect.Session{
+					{ID: "nested-claude", StoragePath: "/workspace/repo/service/.claude/history.jsonl"},
+				},
+			},
+		},
+	}
+
+	enriched := enrichProjectEntries(projects, snapshot)
+	if len(enriched) != 2 {
+		t.Fatalf("expected two projects, got %d", len(enriched))
+	}
+
+	if enriched[0].Name != "repo" || enriched[0].SessionByTool["codex"] != 1 {
+		t.Fatalf("expected repo codex session count, got %#v", enriched[0])
+	}
+	if enriched[1].Name != "service" || enriched[1].SessionByTool["codex"] != 1 || enriched[1].SessionByTool["claude"] != 1 {
+		t.Fatalf("expected nested project session counts by tool, got %#v", enriched[1])
+	}
+}
+
+func TestEnrichSkillEntriesAssignsConflictState(t *testing.T) {
+	t.Parallel()
+
+	skills := enrichSkillEntries([]tui.SkillEntry{
+		{Name: "frontend-design", Path: "/workspace/repo/skills/frontend-design/SKILL.md", Scope: "project", Content: "# one"},
+		{Name: "frontend-design", Path: "/home/me/.codex/skills/frontend-design/SKILL.md", Scope: "user", Tool: domain.ToolCodex, Content: "# one"},
+		{Name: "lint-helper", Path: "/home/me/.claude/skills/lint-helper/SKILL.md", Scope: "user", Tool: domain.ToolClaude, Content: "# two"},
+	})
+
+	if len(skills) != 3 {
+		t.Fatalf("expected enriched skills, got %d", len(skills))
+	}
+	if skills[0].GroupKey == "" || skills[0].ContentHash == "" {
+		t.Fatalf("expected grouping metadata, got %#v", skills[0])
+	}
+
+	var frontendProject tui.SkillEntry
+	var lintUser tui.SkillEntry
+	for _, skill := range skills {
+		switch skill.Path {
+		case "/workspace/repo/skills/frontend-design/SKILL.md":
+			frontendProject = skill
+		case "/home/me/.claude/skills/lint-helper/SKILL.md":
+			lintUser = skill
+		}
+	}
+	if frontendProject.ConflictState != "both-present" || frontendProject.VariantCount != 2 {
+		t.Fatalf("expected both-present grouped skill, got %#v", frontendProject)
+	}
+	if lintUser.ConflictState != "only-in-user/global" || lintUser.VariantCount != 1 {
+		t.Fatalf("expected user-only grouped skill, got %#v", lintUser)
 	}
 }
 

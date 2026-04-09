@@ -15,6 +15,8 @@ type SkillEntry struct {
 	Description string `json:"description"`
 	Path        string `json:"path"`
 	Source      string `json:"source"`
+	Scope       string `json:"scope,omitempty"`
+	Tool        string `json:"tool,omitempty"`
 }
 
 type MCPEntry struct {
@@ -33,23 +35,28 @@ type ProjectEntry struct {
 }
 
 func ScanSkills(fs fsx.FS, cwd, homeDir string) ([]SkillEntry, error) {
-	roots := []string{
-		filepath.Join(cwd, ".github", "skills"),
-		filepath.Join(cwd, "skills"),
-		filepath.Join(homeDir, ".codex", "skills"),
-		filepath.Join(homeDir, ".claude", "skills"),
-		filepath.Join(homeDir, ".config", "opencode", "skills"),
-		filepath.Join(homeDir, ".local", "share", "opencode", "skills"),
+	roots := []struct {
+		Path   string
+		Source string
+		Scope  string
+		Tool   string
+	}{
+		{Path: filepath.Join(cwd, ".github", "skills"), Source: "project .github/skills", Scope: "project"},
+		{Path: filepath.Join(cwd, "skills"), Source: "project skills", Scope: "project"},
+		{Path: filepath.Join(homeDir, ".codex", "skills"), Source: "codex user", Scope: "user", Tool: "codex"},
+		{Path: filepath.Join(homeDir, ".claude", "skills"), Source: "claude user", Scope: "user", Tool: "claude"},
+		{Path: filepath.Join(homeDir, ".config", "opencode", "skills"), Source: "opencode user", Scope: "user", Tool: "opencode"},
+		{Path: filepath.Join(homeDir, ".local", "share", "opencode", "skills"), Source: "opencode global", Scope: "global", Tool: "opencode"},
 	}
 
 	entries := []SkillEntry{}
 	for _, root := range roots {
-		files, err := listMarkdownFiles(fs, root, "SKILL.md")
+		files, err := listMarkdownFiles(fs, root.Path, "SKILL.md")
 		if err != nil {
 			return nil, err
 		}
 		for _, path := range files {
-			entry := parseSkillEntry(fs, path, root)
+			entry := parseSkillEntry(fs, path, root.Path, root.Source, root.Scope, root.Tool)
 			if entry.Name == "" {
 				continue
 			}
@@ -127,7 +134,7 @@ func ScanProjects(fs fsx.FS, roots []string) ([]ProjectEntry, error) {
 	return entries, nil
 }
 
-func parseSkillEntry(fs fsx.FS, path string, root string) SkillEntry {
+func parseSkillEntry(fs fsx.FS, path string, root string, source string, scope string, tool string) SkillEntry {
 	data, err := fs.ReadFile(path)
 	if err != nil {
 		return SkillEntry{}
@@ -158,11 +165,16 @@ func parseSkillEntry(fs fsx.FS, path string, root string) SkillEntry {
 	if description == "" {
 		description = firstParagraph(content)
 	}
+	if source == "" {
+		source = relativeSource(root, path)
+	}
 	return SkillEntry{
 		Name:        name,
 		Description: truncate(description, 140),
 		Path:        path,
-		Source:      relativeSource(root, path),
+		Source:      source,
+		Scope:       scope,
+		Tool:        tool,
 	}
 }
 
