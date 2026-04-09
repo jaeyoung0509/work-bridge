@@ -105,12 +105,16 @@ func (a *App) newUnpackCommand() *cobra.Command {
 
 func (a *App) newVersionCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:    "version",
-		Short:  "Print the build version.",
-		Args:   cobra.NoArgs,
+		Use:   "version",
+		Short: "Print the build version.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "work-bridge %s\n", Version)
+			_, err := fmt.Fprintf(cmd.OutOrStdout(),
+				"work-bridge %s (commit: %s, built: %s)\n",
+				Version, Commit, BuildDate,
+			)
 			return err
 		},
 	}
 }
+
