@@ -47,16 +47,16 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
-      - name: Set npm version
-        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
-
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
-          version: latest
+          version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set npm version
+        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
 
       - name: Publish npm wrapper
         run: npm publish --access public
