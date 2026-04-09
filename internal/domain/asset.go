@@ -23,9 +23,10 @@ func (k AssetKind) IsStable() bool {
 }
 
 type ToolPaths struct {
-	Codex  string `json:"codex,omitempty" mapstructure:"codex"`
-	Gemini string `json:"gemini,omitempty" mapstructure:"gemini"`
-	Claude string `json:"claude,omitempty" mapstructure:"claude"`
+	Codex    string `json:"codex,omitempty" mapstructure:"codex"`
+	Gemini   string `json:"gemini,omitempty" mapstructure:"gemini"`
+	Claude   string `json:"claude,omitempty" mapstructure:"claude"`
+	OpenCode string `json:"opencode,omitempty" mapstructure:"opencode"`
 }
 
 func (p ToolPaths) Dir(tool Tool, homeDir string) string {
@@ -45,6 +46,11 @@ func (p ToolPaths) Dir(tool Tool, homeDir string) string {
 			return filepath.Clean(p.Claude)
 		}
 		return filepath.Join(homeDir, ".claude")
+	case ToolOpenCode:
+		if p.OpenCode != "" {
+			return filepath.Clean(p.OpenCode)
+		}
+		return filepath.Join(homeDir, ".local", "share", "opencode")
 	default:
 		return filepath.Clean(homeDir)
 	}

@@ -32,3 +32,16 @@ func splitJSONLLines(data []byte) ([][]byte, error) {
 
 	return lines, scanner.Err()
 }
+
+func stringField(raw map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value, ok := raw[key]
+		if !ok {
+			continue
+		}
+		if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
+}

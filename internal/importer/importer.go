@@ -60,6 +60,8 @@ func ImportRaw(opts Options) (RawImportResult, error) {
 		return importGemini(opts)
 	case "claude":
 		return importClaude(opts)
+	case "opencode":
+		return importOpenCode(opts)
 	default:
 		return RawImportResult{}, fmt.Errorf("unsupported tool %q", opts.Tool)
 	}
@@ -130,6 +132,10 @@ func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe, policy domai
 		switch strings.ToLower(filepath.Ext(asset.Path)) {
 		case ".json":
 			if err := json.Unmarshal(data, &parsed); err != nil {
+				continue
+			}
+		case ".jsonc":
+			if err := json.Unmarshal(stripJSONCComments(data), &parsed); err != nil {
 				continue
 			}
 		case ".toml":
