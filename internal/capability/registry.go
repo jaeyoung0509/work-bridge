@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"slices"
 
-	"sessionport/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
 )
 
 type Support string
@@ -62,13 +62,13 @@ func ProfileFor(target domain.Tool, assetKind domain.AssetKind) (Profile, error)
 func generatedArtifactsFor(target domain.Tool) []string {
 	switch target {
 	case domain.ToolCodex:
-		return []string{"AGENTS.sessionport.md", "CONFIG_HINTS.md", "STARTER_PROMPT.md"}
+		return []string{"AGENTS.work-bridge.md", "CONFIG_HINTS.md", "STARTER_PROMPT.md"}
 	case domain.ToolGemini:
-		return []string{"GEMINI.sessionport.md", "SETTINGS_PATCH.json", "STARTER_PROMPT.md"}
+		return []string{"GEMINI.work-bridge.md", "SETTINGS_PATCH.json", "STARTER_PROMPT.md"}
 	case domain.ToolClaude:
-		return []string{"CLAUDE.sessionport.md", "MEMORY_NOTE.md", "STARTER_PROMPT.md"}
+		return []string{"CLAUDE.work-bridge.md", "MEMORY_NOTE.md", "STARTER_PROMPT.md"}
 	case domain.ToolOpenCode:
-		return []string{"OPENCODE.sessionport.md", "CONFIG_HINTS.md", "STARTER_PROMPT.md"}
+		return []string{"OPENCODE.work-bridge.md", "CONFIG_HINTS.md", "STARTER_PROMPT.md"}
 	default:
 		return []string{}
 	}

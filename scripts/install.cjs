@@ -6,48 +6,48 @@ const { spawnSync } = require('node:child_process');
 
 const pkgRoot = path.resolve(__dirname, '..');
 const vendorDir = path.join(pkgRoot, 'bin');
-const binaryName = process.platform === 'win32' ? 'sessionport.exe' : 'sessionport';
+const binaryName = process.platform === 'win32' ? 'work-bridge.exe' : 'work-bridge';
 
 const repo =
-  process.env.SESSIONPORT_GITHUB_REPO ||
+  process.env.WORK_BRIDGE_GITHUB_REPO ||
   process.env.npm_package_repository_url ||
   process.env.npm_package_repository ||
   '';
-const releaseTag = process.env.SESSIONPORT_VERSION || process.env.npm_package_version || 'latest';
+const releaseTag = process.env.WORK_BRIDGE_VERSION || process.env.npm_package_version || 'latest';
 
 if (!repo) {
-  console.warn('[sessionport] SESSIONPORT_GITHUB_REPO is not set; skipping binary download.');
+  console.warn('[work-bridge] WORK_BRIDGE_GITHUB_REPO is not set; skipping binary download.');
   process.exit(0);
 }
 
 const [owner, name] = repo.replace(/^git\+https:\/\/github.com\//, '').replace(/^https:\/\/github.com\//, '').replace(/\.git$/, '').split('/').slice(-2);
 if (!owner || !name) {
-  console.warn('[sessionport] Could not parse GitHub repository from SESSIONPORT_GITHUB_REPO; skipping binary download.');
+  console.warn('[work-bridge] Could not parse GitHub repository from WORK_BRIDGE_GITHUB_REPO; skipping binary download.');
   process.exit(0);
 }
 
 const platform = platformId(process.platform);
 const arch = archId(process.arch);
 if (!platform || !arch) {
-  console.warn(`[sessionport] Unsupported platform ${process.platform}/${process.arch}; skipping binary download.`);
+  console.warn(`[work-bridge] Unsupported platform ${process.platform}/${process.arch}; skipping binary download.`);
   process.exit(0);
 }
 
-const assetName = `sessionport_${platform}_${arch}.tar.gz`;
+const assetName = `work-bridge_${platform}_${arch}.tar.gz`;
 const url = `https://github.com/${owner}/${name}/releases/download/${releaseTag}/${assetName}`;
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sessionport-'));
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'work-bridge-'));
 const archivePath = path.join(tmpDir, assetName);
 
 download(url, archivePath, (err) => {
   if (err) {
-    console.warn(`[sessionport] Download failed: ${err.message}`);
+    console.warn(`[work-bridge] Download failed: ${err.message}`);
     process.exit(0);
   }
 
   fs.mkdirSync(vendorDir, { recursive: true });
   const extract = spawnSync('tar', ['-xzf', archivePath, '-C', vendorDir], { stdio: 'inherit' });
   if (extract.status !== 0) {
-    console.warn('[sessionport] Extraction failed; the wrapper will remain inert until a successful reinstall.');
+    console.warn('[work-bridge] Extraction failed; the wrapper will remain inert until a successful reinstall.');
     process.exit(0);
   }
 

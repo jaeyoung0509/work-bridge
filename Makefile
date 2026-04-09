@@ -1,7 +1,7 @@
 .PHONY: build test lint fmt tidy
 
 build:
-	go build -o ./bin/sessionport ./cmd/sessionport
+	go build -o ./bin/work-bridge ./cmd/work-bridge
 
 test:
 	go test ./...

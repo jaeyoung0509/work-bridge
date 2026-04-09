@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"sessionport/internal/domain"
-	"sessionport/internal/inspect"
-	"sessionport/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/inspect"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 )
 
 func importClaude(opts Options) (RawImportResult, error) {

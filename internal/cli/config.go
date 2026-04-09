@@ -25,10 +25,10 @@ func (a *App) findDefaultConfigFile() (string, error) {
 
 	for _, dir := range []string{cwd, homeDir} {
 		for _, name := range []string{
-			".sessionport.yaml",
-			".sessionport.yml",
-			".sessionport.toml",
-			".sessionport.json",
+			".work-bridge.yaml",
+			".work-bridge.yml",
+			".work-bridge.toml",
+			".work-bridge.json",
 		} {
 			candidate := filepath.Join(dir, name)
 			info, statErr := a.fs.Stat(candidate)

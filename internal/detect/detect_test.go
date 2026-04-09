@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"sessionport/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 )
 
 func TestRunFindsArtifactsAcrossHomeAndProject(t *testing.T) {

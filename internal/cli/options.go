@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"sessionport/internal/importer"
+	"github.com/jaeyoung0509/work-bridge/internal/importer"
 )
 
 func (a *App) resolveWorkingDirs() (string, string, error) {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"sessionport/internal/importer"
+	"github.com/jaeyoung0509/work-bridge/internal/importer"
 )
 
 func (a *App) runImport(cmd *cobra.Command, _ []string) error {

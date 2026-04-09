@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"sessionport/internal/cli"
+	"github.com/jaeyoung0509/work-bridge/internal/cli"
 )
 
 func main() {

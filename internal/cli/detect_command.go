@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"sessionport/internal/detect"
+	"github.com/jaeyoung0509/work-bridge/internal/detect"
 )
 
 func (a *App) runDetect(cmd *cobra.Command, _ []string) error {

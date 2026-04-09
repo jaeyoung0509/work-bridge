@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"sessionport/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 )
 
 func TestRunPrintsHelpByDefault(t *testing.T) {
@@ -29,7 +29,7 @@ func TestRunPrintsHelpByDefault(t *testing.T) {
 		t.Fatalf("expected empty stderr, got %q", stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"sessionport (headless)", "project:", "tools:"} {
+	for _, want := range []string{"work-bridge (headless)", "project:", "tools:"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected headless output to contain %q, got %q", want, output)
 		}
@@ -110,7 +110,7 @@ func TestVersionCommandPrintsVersion(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("expected empty stderr, got %q", stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "sessionport") {
+	if !strings.Contains(stdout.String(), "work-bridge") {
 		t.Fatalf("expected version output, got %q", stdout.String())
 	}
 }
@@ -156,7 +156,7 @@ func TestDetectCommandLoadsDefaultConfigFileFromCwd(t *testing.T) {
 	cwd := filepath.Join(root, "repo")
 
 	mkdirAll(t, filepath.Join(cwd, ".git"))
-	writeFile(t, filepath.Join(cwd, ".sessionport.json"), `{"format":"json"}`)
+	writeFile(t, filepath.Join(cwd, ".work-bridge.json"), `{"format":"json"}`)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

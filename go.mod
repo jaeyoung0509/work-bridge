@@ -1,4 +1,4 @@
-module sessionport
+module github.com/jaeyoung0509/work-bridge
 
 go 1.25.0
 

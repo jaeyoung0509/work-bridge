@@ -1,6 +1,6 @@
 package importer
 
-import "sessionport/internal/domain"
+import "github.com/jaeyoung0509/work-bridge/internal/domain"
 
 type RawImportResult struct {
 	AssetKind            domain.AssetKind

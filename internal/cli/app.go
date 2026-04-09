@@ -12,21 +12,22 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"sessionport/internal/domain"
-	"sessionport/internal/platform/archivex"
-	"sessionport/internal/platform/clockx"
-	"sessionport/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/archivex"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/clockx"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 )
 
 var Version = "dev"
 
 type Config struct {
-	ConfigFile string `mapstructure:"config"`
-	Format     string `mapstructure:"format"`
-	Verbose    bool   `mapstructure:"verbose"`
-	Paths      domain.ToolPaths
-	Output     OutputConfig
-	Redaction  domain.RedactionPolicy
+	ConfigFile     string   `mapstructure:"config"`
+	Format         string   `mapstructure:"format"`
+	Verbose        bool     `mapstructure:"verbose"`
+	WorkspaceRoots []string `mapstructure:"workspace_roots"`
+	Paths          domain.ToolPaths
+	Output         OutputConfig
+	Redaction      domain.RedactionPolicy
 }
 
 type OutputConfig struct {
@@ -63,7 +64,7 @@ func New(stdout io.Writer, stderr io.Writer) *App {
 	}
 
 	v := viper.New()
-	v.SetEnvPrefix("SESSIONPORT")
+	v.SetEnvPrefix("WORK_BRIDGE")
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 	v.AutomaticEnv()
 	v.SetDefault("format", "text")
@@ -133,9 +134,10 @@ func (a *App) initConfig(cmd *cobra.Command) error {
 	}
 
 	a.config = Config{
-		ConfigFile: configPath,
-		Format:     a.viper.GetString("format"),
-		Verbose:    a.viper.GetBool("verbose"),
+		ConfigFile:     configPath,
+		Format:         a.viper.GetString("format"),
+		Verbose:        a.viper.GetBool("verbose"),
+		WorkspaceRoots: a.viper.GetStringSlice("workspace_roots"),
 		Paths: domain.ToolPaths{
 			Codex:    a.viper.GetString("paths.codex"),
 			Gemini:   a.viper.GetString("paths.gemini"),
@@ -167,7 +169,7 @@ func (a *App) initConfig(cmd *cobra.Command) error {
 
 func (a *App) newRootCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "sessionport",
+		Use:           "work-bridge",
 		Short:         "Portable working-state CLI for coding-agent sessions.",
 		Long:          "TUI-first workspace for coding-agent portability across Claude Code, Gemini CLI, OpenCode, and Codex CLI.",
 		SilenceErrors: true,
@@ -180,15 +182,17 @@ func (a *App) newRootCommand() *cobra.Command {
 	}
 
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.SetVersionTemplate("sessionport {{.Version}}\n")
+	root.SetVersionTemplate("work-bridge {{.Version}}\n")
 
-	root.PersistentFlags().String("config", "", "Path to a sessionport config file.")
+	root.PersistentFlags().String("config", "", "Path to a work-bridge config file.")
 	root.PersistentFlags().String("format", "text", "Output format. One of: text, json.")
 	root.PersistentFlags().Bool("verbose", false, "Enable verbose logging.")
+	root.PersistentFlags().StringSlice("workspace-roots", nil, "Workspace roots to scan for projects.")
 
 	_ = a.viper.BindPFlag("config", root.PersistentFlags().Lookup("config"))
 	_ = a.viper.BindPFlag("format", root.PersistentFlags().Lookup("format"))
 	_ = a.viper.BindPFlag("verbose", root.PersistentFlags().Lookup("verbose"))
+	_ = a.viper.BindPFlag("workspace_roots", root.PersistentFlags().Lookup("workspace-roots"))
 
 	root.AddCommand(
 		a.newDetectCommand(),

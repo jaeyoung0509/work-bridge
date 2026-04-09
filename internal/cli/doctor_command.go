@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"sessionport/internal/doctor"
-	"sessionport/internal/domain"
-	"sessionport/internal/importer"
+	"github.com/jaeyoung0509/work-bridge/internal/doctor"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/importer"
 )
 
 func (a *App) runDoctor(cmd *cobra.Command, _ []string) error {

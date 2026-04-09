@@ -9,25 +9,57 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"sessionport/internal/capability"
-	"sessionport/internal/detect"
-	"sessionport/internal/domain"
-	"sessionport/internal/inspect"
+	"github.com/jaeyoung0509/work-bridge/internal/detect"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/inspect"
+)
+
+const (
+	appName           = "work-bridge"
+	defaultExportRoot = "work-bridge-export"
 )
 
 type Backend struct {
-	Detect          func(context.Context) (detect.Report, error)
-	Inspect         func(context.Context, string) (inspect.Report, error)
-	Import          func(context.Context, string, string) (domain.SessionBundle, error)
-	Doctor          func(context.Context, domain.SessionBundle, domain.Tool) (domain.CompatibilityReport, error)
-	Export          func(context.Context, domain.SessionBundle, domain.Tool, string) (domain.ExportManifest, error)
-	ScanSkills      func(context.Context) ([]SkillEntry, error)
-	ScanMCP         func(context.Context) ([]MCPEntry, error)
-	DefaultExportDir string
+	LoadWorkspaceSnapshot func(context.Context) (WorkspaceSnapshot, error)
+	ImportSession         func(context.Context, domain.Tool, string) (domain.SessionBundle, error)
+	DoctorBundle          func(context.Context, domain.SessionBundle, domain.Tool) (domain.CompatibilityReport, error)
+	ExportBundle          func(context.Context, domain.SessionBundle, domain.Tool, string) (domain.ExportManifest, error)
+	InstallSkill          func(context.Context, SkillEntry) (SkillInstallResult, error)
+	ProbeMCP              func(context.Context, MCPEntry) (MCPProbeResult, error)
+	DefaultExportDir      string
+}
+
+type WorkspaceSnapshot struct {
+	Detect        detect.Report                  `json:"detect"`
+	InspectByTool map[domain.Tool]inspect.Report `json:"inspect_by_tool"`
+	Projects      []ProjectEntry                 `json:"projects"`
+	Skills        []SkillEntry                   `json:"skills"`
+	MCPProfiles   []MCPEntry                     `json:"mcp_profiles"`
+	HealthSummary WorkspaceHealthSummary         `json:"health_summary"`
+}
+
+type WorkspaceHealthSummary struct {
+	InstalledTools int `json:"installed_tools"`
+	ProjectCount   int `json:"project_count"`
+	SessionCount   int `json:"session_count"`
+	SkillCount     int `json:"skill_count"`
+	MCPCount       int `json:"mcp_count"`
+	BrokenMCP      int `json:"broken_mcp"`
+}
+
+type ProjectEntry struct {
+	Name          string   `json:"name"`
+	Root          string   `json:"root"`
+	WorkspaceRoot string   `json:"workspace_root"`
+	Markers       []string `json:"markers,omitempty"`
+	SessionCount  int      `json:"session_count,omitempty"`
+	SkillCount    int      `json:"skill_count,omitempty"`
+	MCPCount      int      `json:"mcp_count,omitempty"`
 }
 
 type SkillEntry struct {
@@ -35,47 +67,202 @@ type SkillEntry struct {
 	Description string `json:"description"`
 	Path        string `json:"path"`
 	Source      string `json:"source"`
+	Content     string `json:"content,omitempty"`
 }
 
 type MCPEntry struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Source  string `json:"source"`
-	Status  string `json:"status"`
-	Details string `json:"details"`
+	Name            string            `json:"name"`
+	Path            string            `json:"path"`
+	Source          string            `json:"source"`
+	Status          string            `json:"status"`
+	Details         string            `json:"details"`
+	Tool            domain.Tool       `json:"tool,omitempty"`
+	Format          string            `json:"format,omitempty"`
+	DeclaredServers int               `json:"declared_servers,omitempty"`
+	ServerNames     []string          `json:"server_names,omitempty"`
+	ParseSource     string            `json:"parse_source,omitempty"`
+	RawConfig       string            `json:"raw_config,omitempty"`
+	ParseWarnings   []string          `json:"parse_warnings,omitempty"`
+	BinaryFound     bool              `json:"binary_found"`
+	BinaryPath      string            `json:"binary_path,omitempty"`
+	Servers         []MCPServerConfig `json:"servers,omitempty"`
 }
 
-type viewKind int
+type MCPServerConfig struct {
+	Name      string            `json:"name"`
+	Transport string            `json:"transport,omitempty"`
+	Command   string            `json:"command,omitempty"`
+	Args      []string          `json:"args,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	Cwd       string            `json:"cwd,omitempty"`
+	URL       string            `json:"url,omitempty"`
+}
+
+type SkillInstallResult struct {
+	InstalledPath string   `json:"installed_path"`
+	Overwrote     bool     `json:"overwrote"`
+	Warnings      []string `json:"warnings,omitempty"`
+}
+
+type MCPProbeResult struct {
+	Reachable        bool                   `json:"reachable"`
+	Latency          string                 `json:"latency,omitempty"`
+	ResourceCount    int                    `json:"resource_count,omitempty"`
+	TemplateCount    int                    `json:"template_count,omitempty"`
+	ToolCount        int                    `json:"tool_count,omitempty"`
+	PromptCount      int                    `json:"prompt_count,omitempty"`
+	ConnectedServers int                    `json:"connected_servers,omitempty"`
+	Warnings         []string               `json:"warnings,omitempty"`
+	ProbedAt         string                 `json:"probed_at,omitempty"`
+	Mode             string                 `json:"mode,omitempty"`
+	ServerResults    []MCPServerProbeResult `json:"server_results,omitempty"`
+}
+
+type MCPServerProbeResult struct {
+	Name            string   `json:"name"`
+	Reachable       bool     `json:"reachable"`
+	Latency         string   `json:"latency,omitempty"`
+	Transport       string   `json:"transport,omitempty"`
+	Command         string   `json:"command,omitempty"`
+	ProtocolVersion string   `json:"protocol_version,omitempty"`
+	ServerName      string   `json:"server_name,omitempty"`
+	ServerVersion   string   `json:"server_version,omitempty"`
+	ResourceCount   int      `json:"resource_count,omitempty"`
+	TemplateCount   int      `json:"template_count,omitempty"`
+	ToolCount       int      `json:"tool_count,omitempty"`
+	PromptCount     int      `json:"prompt_count,omitempty"`
+	Error           string   `json:"error,omitempty"`
+	Warnings        []string `json:"warnings,omitempty"`
+}
+
+type workspaceSection int
 
 const (
-	viewProjects viewKind = iota
-	viewSessions
-	viewMCP
-	viewSkills
-	viewLogs
+	sectionSessions workspaceSection = iota
+	sectionProjects
+	sectionSkills
+	sectionMCP
+	sectionLogs
 )
 
-type snapshotMsg struct {
-	detect detect.Report
-	skills []SkillEntry
-	mcp    []MCPEntry
+type focusArea int
+
+const (
+	focusNav focusArea = iota
+	focusList
+	focusPreview
+)
+
+type layoutMode int
+
+const (
+	layoutWide layoutMode = iota
+	layoutMedium
+	layoutNarrow
+)
+
+type PreviewTab string
+
+const (
+	previewSummary  PreviewTab = "Summary"
+	previewRaw      PreviewTab = "Raw"
+	previewDoctor   PreviewTab = "Doctor"
+	previewMetadata PreviewTab = "Metadata"
+	previewContent  PreviewTab = "Content"
+	previewLive     PreviewTab = "Live"
+)
+
+type taskState struct {
+	kind  string
+	label string
 }
 
-type inspectMsg struct {
-	tool   string
-	report inspect.Report
+type snapshotLoadedMsg struct {
+	snapshot WorkspaceSnapshot
 }
 
-type bundleMsg struct {
-	bundle domain.SessionBundle
+type bundleImportedMsg struct {
+	sessionKey string
+	bundle     domain.SessionBundle
+	autoDoctor bool
 }
 
-type exportMsg struct {
-	manifest domain.ExportManifest
+type doctorReadyMsg struct {
+	sessionKey string
+	target     domain.Tool
+	bundle     *domain.SessionBundle
+	report     domain.CompatibilityReport
 }
+
+type exportReadyMsg struct {
+	sessionKey string
+	target     domain.Tool
+	bundle     domain.SessionBundle
+	report     domain.CompatibilityReport
+	manifest   domain.ExportManifest
+}
+
+type skillInstalledMsg struct {
+	skill  SkillEntry
+	result SkillInstallResult
+}
+
+type mcpProbedMsg struct {
+	entry  MCPEntry
+	result MCPProbeResult
+}
+
+type tickMsg struct{}
 
 type errorMsg struct {
 	err error
+}
+
+type sessionItem struct {
+	Tool    domain.Tool
+	Report  inspect.Report
+	Session inspect.Session
+}
+
+type badge struct {
+	label string
+	tone  string
+}
+
+type listItem struct {
+	title    string
+	subtitle string
+	badges   []badge
+}
+
+type rect struct {
+	X int
+	Y int
+	W int
+	H int
+}
+
+func (r rect) contains(x int, y int) bool {
+	return x >= r.X && x < r.X+r.W && y >= r.Y && y < r.Y+r.H
+}
+
+type previewTabHit struct {
+	Tab   PreviewTab
+	Start int
+	End   int
+}
+
+type navHit struct {
+	Section workspaceSection
+	Start   int
+	End     int
+}
+
+type workspaceLayout struct {
+	mode    layoutMode
+	nav     rect
+	list    rect
+	preview rect
 }
 
 type Model struct {
@@ -85,26 +272,58 @@ type Model struct {
 	width  int
 	height int
 
-	loading bool
-	err     error
+	activeSection workspaceSection
+	focus         focusArea
 
-	activeView viewKind
-	activeTool string
-	toolIndex  int
+	searchMode  bool
+	searchQuery string
+	showHelp    bool
+
 	sessionIdx int
+	projectIdx int
+	skillIdx   int
+	mcpIdx     int
+	logIdx     int
+
+	sessionListOffset int
+	projectListOffset int
+	skillListOffset   int
+	mcpListOffset     int
+	logListOffset     int
+
+	sessionTabIdx int
+	skillTabIdx   int
+	mcpTabIdx     int
+
+	sessionPreviewOffset int
+	projectPreviewOffset int
+	skillPreviewOffset   int
+	mcpPreviewOffset     int
+	logPreviewOffset     int
+
 	targetIdx  int
+	spinnerIdx int
 
-	detect detect.Report
-	skills []SkillEntry
-	mcp    []MCPEntry
+	snapshot WorkspaceSnapshot
+	task     taskState
+	lastErr  error
 
-	inspectByTool map[string]inspect.Report
-	bundle        *domain.SessionBundle
-	doctorReport  *domain.CompatibilityReport
-	exportManifest *domain.ExportManifest
+	bundleBySession map[string]domain.SessionBundle
+	doctorByKey     map[string]domain.CompatibilityReport
+	exportByKey     map[string]domain.ExportManifest
+	installByPath   map[string]SkillInstallResult
+	probeByPath     map[string]MCPProbeResult
 
 	logs []string
 }
+
+var (
+	toolOrder          = []domain.Tool{domain.ToolCodex, domain.ToolGemini, domain.ToolClaude, domain.ToolOpenCode}
+	sectionOrder       = []workspaceSection{sectionSessions, sectionProjects, sectionSkills, sectionMCP, sectionLogs}
+	sessionPreviewTabs = []PreviewTab{previewSummary, previewRaw, previewDoctor}
+	skillPreviewTabs   = []PreviewTab{previewMetadata, previewContent}
+	mcpPreviewTabs     = []PreviewTab{previewSummary, previewRaw, previewLive}
+)
 
 func Run(ctx context.Context, backend Backend, stdout, stderr io.Writer) error {
 	model := NewModel(ctx, backend)
@@ -121,19 +340,22 @@ func NewModel(ctx context.Context, backend Backend) Model {
 		ctx = context.Background()
 	}
 	return Model{
-		backend:       backend,
-		ctx:           ctx,
-		activeView:    viewProjects,
-		activeTool:    "codex",
-		inspectByTool: map[string]inspect.Report{},
-		logs:          []string{"workspace loaded"},
+		backend:         backend,
+		ctx:             ctx,
+		activeSection:   sectionSessions,
+		focus:           focusList,
+		bundleBySession: map[string]domain.SessionBundle{},
+		doctorByKey:     map[string]domain.CompatibilityReport{},
+		exportByKey:     map[string]domain.ExportManifest{},
+		installByPath:   map[string]SkillInstallResult{},
+		probeByPath:     map[string]MCPProbeResult{},
+		logs:            []string{"workspace boot requested"},
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
-		m.loadSnapshotCmd(),
-	)
+	m.task = taskState{kind: "load", label: "Loading workspace"}
+	return tea.Batch(m.loadWorkspaceCmd(), tickCmd())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -141,82 +363,310 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.ensureVisibleSelection()
 		return m, nil
+	case tickMsg:
+		if m.task.kind == "" {
+			return m, nil
+		}
+		m.spinnerIdx = (m.spinnerIdx + 1) % 4
+		return m, tickCmd()
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
-			return m, tea.Quit
-		case "tab":
-			m.activeView = (m.activeView + 1) % 5
-			return m, nil
-		case "shift+tab":
-			m.activeView = (m.activeView + 4) % 5
-			return m, nil
-		case "t":
-			m.targetIdx = (m.targetIdx + 1) % 4
-			return m, nil
-		case "T":
-			m.targetIdx = (m.targetIdx + 3) % 4
-			return m, nil
-		case "left":
-			return m.prevTool()
-		case "right":
-			return m.nextTool()
-		case "up":
-			return m.moveSelection(-1), nil
-		case "down":
-			return m.moveSelection(1), nil
-		case "enter":
-			if m.activeView == viewSessions {
-				return m, m.importSelectedCmd()
+		return m.handleKey(msg)
+	case tea.MouseClickMsg:
+		return m.handleMouseClick(msg)
+	case tea.MouseWheelMsg:
+		return m.handleMouseWheel(msg)
+	case snapshotLoadedMsg:
+		m.snapshot = msg.snapshot
+		m.task = taskState{}
+		m.lastErr = nil
+		m.logs = append(m.logs, fmt.Sprintf("workspace loaded: %d sessions, %d skills, %d mcp", m.snapshot.HealthSummary.SessionCount, m.snapshot.HealthSummary.SkillCount, m.snapshot.HealthSummary.MCPCount))
+		m.ensureValidSelection()
+		m.ensureSectionWithContent()
+		m.ensureVisibleSelection()
+		return m, nil
+	case bundleImportedMsg:
+		m.bundleBySession[msg.sessionKey] = msg.bundle
+		m.task = taskState{}
+		m.lastErr = nil
+		m.logs = append(m.logs, fmt.Sprintf("imported %s", msg.sessionKey))
+		if msg.autoDoctor {
+			if item, ok := m.selectedSession(); ok && sessionKeyFor(item.Tool, item.Session.ID) == msg.sessionKey {
+				target := m.targetTool()
+				m.task = taskState{kind: "doctor", label: fmt.Sprintf("Doctor %s -> %s", item.Session.ID, target)}
+				return m, tea.Batch(m.doctorSelectedCmd(), tickCmd())
 			}
-			if m.activeView == viewProjects {
-				return m, m.refreshSelectedToolCmd()
-			}
-		case "e":
-			if m.bundle != nil {
-				return m, m.exportSelectedCmd()
-			}
-		case "d":
-			if m.bundle != nil {
-				return m, m.doctorSelectedCmd()
-			}
-		case "r":
-			return m, m.loadSnapshotCmd()
 		}
-	case snapshotMsg:
-		m.detect = msg.detect
-		m.skills = msg.skills
-		m.mcp = msg.mcp
-		m.loading = false
-		if m.activeTool == "" || !m.toolAvailable(m.activeTool) {
-			m.activeTool = m.firstAvailableTool()
+		return m, nil
+	case doctorReadyMsg:
+		if msg.bundle != nil {
+			m.bundleBySession[msg.sessionKey] = *msg.bundle
 		}
-		if m.activeTool != "" {
-			return m, m.inspectToolCmd(m.activeTool)
+		m.doctorByKey[doctorKey(msg.sessionKey, msg.target)] = msg.report
+		m.task = taskState{}
+		m.lastErr = nil
+		m.logs = append(m.logs, fmt.Sprintf("doctor %s -> %s: compatible=%d partial=%d unsupported=%d", msg.sessionKey, msg.target, len(msg.report.CompatibleFields), len(msg.report.PartialFields), len(msg.report.UnsupportedFields)))
+		return m, nil
+	case exportReadyMsg:
+		m.bundleBySession[msg.sessionKey] = msg.bundle
+		m.doctorByKey[doctorKey(msg.sessionKey, msg.target)] = msg.report
+		m.exportByKey[doctorKey(msg.sessionKey, msg.target)] = msg.manifest
+		m.task = taskState{}
+		m.lastErr = nil
+		m.logs = append(m.logs, fmt.Sprintf("exported %s -> %s at %s", msg.sessionKey, msg.target, msg.manifest.OutputDir))
+		return m, nil
+	case skillInstalledMsg:
+		m.installByPath[msg.skill.Path] = msg.result
+		m.task = taskState{kind: "load", label: "Refreshing workspace"}
+		m.lastErr = nil
+		m.logs = append(m.logs, fmt.Sprintf("installed skill %s -> %s", msg.skill.Name, shortPath(msg.result.InstalledPath)))
+		return m, tea.Batch(m.loadWorkspaceCmd(), tickCmd())
+	case mcpProbedMsg:
+		m.probeByPath[msg.entry.Path] = msg.result
+		m.task = taskState{}
+		m.lastErr = nil
+		state := "unreachable"
+		if msg.result.Reachable {
+			state = "config-verified"
 		}
-	case inspectMsg:
-		m.inspectByTool[msg.tool] = msg.report
-		if m.activeTool == msg.tool {
-			m.sessionIdx = clampIndex(m.sessionIdx, len(msg.report.Sessions))
-		}
-	case bundleMsg:
-		b := msg.bundle
-		m.bundle = &b
-		m.logs = append(m.logs, fmt.Sprintf("imported %s:%s", b.SourceTool, b.SourceSessionID))
-		return m, m.doctorSelectedCmd()
-	case exportMsg:
-		manifest := msg.manifest
-		m.exportManifest = &manifest
-		m.logs = append(m.logs, fmt.Sprintf("exported to %s", manifest.OutputDir))
+		m.logs = append(m.logs, fmt.Sprintf("probed %s: %s", msg.entry.Name, state))
+		return m, nil
 	case errorMsg:
-		m.err = msg.err
-		m.loading = false
+		m.task = taskState{}
+		m.lastErr = msg.err
 		m.logs = append(m.logs, "error: "+msg.err.Error())
-	case bundleDoctorMsg:
-		report := msg.report
-		m.doctorReport = &report
-		m.logs = append(m.logs, fmt.Sprintf("doctor target=%s compatible=%d partial=%d unsupported=%d", report.TargetTool, len(report.CompatibleFields), len(report.PartialFields), len(report.UnsupportedFields)))
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	if m.searchMode {
+		switch key {
+		case "esc":
+			m.searchMode = false
+			return m, nil
+		case "enter":
+			m.searchMode = false
+			m.ensureValidSelection()
+			m.ensureVisibleSelection()
+			return m, nil
+		case "backspace", "ctrl+h":
+			if len(m.searchQuery) > 0 {
+				m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+				m.ensureValidSelection()
+				m.ensureVisibleSelection()
+			}
+			return m, nil
+		default:
+			if (len(key) == 1 && key != " ") || key == "space" {
+				if key == "space" {
+					m.searchQuery += " "
+				} else {
+					m.searchQuery += key
+				}
+				m.ensureValidSelection()
+				m.ensureVisibleSelection()
+			}
+			return m, nil
+		}
+	}
+
+	if m.showHelp {
+		switch key {
+		case "?", "esc", "q":
+			m.showHelp = false
+			return m, nil
+		}
+	}
+
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "q":
+		if m.showHelp {
+			m.showHelp = false
+			return m, nil
+		}
+		return m, tea.Quit
+	case "?":
+		m.showHelp = !m.showHelp
+		return m, nil
+	case "/":
+		m.searchMode = true
+		return m, nil
+	case "esc":
+		if m.searchQuery != "" {
+			m.searchQuery = ""
+			m.ensureValidSelection()
+			m.ensureVisibleSelection()
+		}
+		return m, nil
+	case "tab":
+		m.focus = (m.focus + 1) % 3
+		return m, nil
+	case "shift+tab":
+		m.focus = (m.focus + 2) % 3
+		return m, nil
+	case "r":
+		m.task = taskState{kind: "load", label: "Refreshing workspace"}
+		return m, tea.Batch(m.loadWorkspaceCmd(), tickCmd())
+	case "t":
+		m.targetIdx = (m.targetIdx + 1) % len(toolOrder)
+		return m, nil
+	case "T":
+		m.targetIdx = (m.targetIdx + len(toolOrder) - 1) % len(toolOrder)
+		return m, nil
+	case "[":
+		m.movePreviewTab(-1)
+		return m, nil
+	case "]":
+		m.movePreviewTab(1)
+		return m, nil
+	case "left", "h":
+		if m.focus == focusPreview {
+			m.movePreviewTab(-1)
+			return m, nil
+		}
+	case "right", "l":
+		if m.focus == focusPreview {
+			m.movePreviewTab(1)
+			return m, nil
+		}
+	case "up", "k":
+		m.moveSelection(-1)
+		return m, nil
+	case "down", "j":
+		m.moveSelection(1)
+		return m, nil
+	case "enter":
+		if m.layoutMode() == layoutNarrow {
+			if m.focus == focusList {
+				m.focus = focusPreview
+			} else {
+				m.focus = focusList
+			}
+			return m, nil
+		}
+		if m.focus == focusNav {
+			m.focus = focusList
+		} else if m.focus == focusList {
+			m.focus = focusPreview
+		} else {
+			m.focus = focusList
+		}
+		return m, nil
+	case "i":
+		if m.activeSection == sectionSessions {
+			if _, ok := m.selectedSession(); ok {
+				m.task = taskState{kind: "import", label: "Importing session"}
+				return m, tea.Batch(m.importSelectedCmd(), tickCmd())
+			}
+		}
+	case "d":
+		if m.activeSection == sectionSessions {
+			if _, ok := m.selectedSession(); ok {
+				m.task = taskState{kind: "doctor", label: fmt.Sprintf("Doctor -> %s", m.targetTool())}
+				return m, tea.Batch(m.doctorSelectedCmd(), tickCmd())
+			}
+		}
+	case "e":
+		if m.activeSection == sectionSessions {
+			if _, ok := m.selectedSession(); ok {
+				m.task = taskState{kind: "export", label: fmt.Sprintf("Export -> %s", m.targetTool())}
+				return m, tea.Batch(m.exportSelectedCmd(), tickCmd())
+			}
+		}
+	case "I":
+		if m.activeSection == sectionSkills {
+			if _, ok := m.selectedSkill(); ok {
+				m.task = taskState{kind: "skill-install", label: "Installing skill"}
+				return m, tea.Batch(m.installSelectedSkillCmd(), tickCmd())
+			}
+		}
+	case "p":
+		if m.activeSection == sectionMCP {
+			if _, ok := m.selectedMCP(); ok {
+				m.task = taskState{kind: "mcp-probe", label: "Validating MCP config"}
+				return m, tea.Batch(m.probeSelectedMCP(), tickCmd())
+			}
+		}
+	}
+
+	return m, nil
+}
+
+func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	mouse := tea.Mouse(msg)
+	layout := m.currentLayout()
+
+	if layout.mode == layoutNarrow && m.focus == focusPreview && layout.preview.contains(mouse.X, mouse.Y) {
+		if tab, ok := m.hitPreviewTab(layout, mouse.X, mouse.Y); ok {
+			m.setPreviewTab(tab)
+		}
+		return m, nil
+	}
+
+	if layout.nav.contains(mouse.X, mouse.Y) {
+		m.focus = focusNav
+		if section, ok := m.hitNav(layout, mouse.X, mouse.Y); ok {
+			m.setActiveSection(section)
+		}
+		return m, nil
+	}
+
+	if layout.list.contains(mouse.X, mouse.Y) {
+		m.focus = focusList
+		if index, ok := m.hitList(layout, mouse.X, mouse.Y); ok {
+			m.selectVisibleIndex(index)
+		}
+		return m, nil
+	}
+
+	if layout.preview.contains(mouse.X, mouse.Y) {
+		m.focus = focusPreview
+		if tab, ok := m.hitPreviewTab(layout, mouse.X, mouse.Y); ok {
+			m.setPreviewTab(tab)
+		}
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	mouse := tea.Mouse(msg)
+	layout := m.currentLayout()
+	delta := 0
+	switch mouse.Button {
+	case tea.MouseWheelUp:
+		delta = -1
+	case tea.MouseWheelDown:
+		delta = 1
+	default:
+		return m, nil
+	}
+
+	if layout.mode == layoutNarrow && m.focus == focusPreview && layout.preview.contains(mouse.X, mouse.Y) {
+		m.focus = focusPreview
+		m.scrollPreview(delta * 3)
+		return m, nil
+	}
+
+	if layout.list.contains(mouse.X, mouse.Y) {
+		m.focus = focusList
+		m.moveSelection(delta)
+		return m, nil
+	}
+
+	if layout.preview.contains(mouse.X, mouse.Y) {
+		m.focus = focusPreview
+		m.scrollPreview(delta * 3)
+		return m, nil
 	}
 
 	return m, nil
@@ -226,363 +676,1587 @@ func (m Model) View() tea.View {
 	view := tea.NewView("")
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeCellMotion
-	view.WindowTitle = "sessionport"
-	if m.width == 0 {
-		view.SetContent("loading sessionport workspace...")
+	view.WindowTitle = appName
+	if m.width == 0 || m.height == 0 {
+		view.SetContent("loading " + appName + " workspace...")
 		return view
 	}
 
-	header := m.renderHeader()
-	columns := m.renderColumns()
-	footer := m.renderFooter()
-	view.SetContent(lipgloss.JoinVertical(lipgloss.Left, header, columns, footer))
+	m.ensureVisibleSelection()
+
+	body := lipgloss.JoinVertical(lipgloss.Left,
+		m.renderHeader(),
+		m.renderBody(),
+		m.renderStatusBar(),
+	)
+	if m.showHelp {
+		body = lipgloss.JoinVertical(lipgloss.Left, body, m.renderHelp())
+	}
+	view.SetContent(body)
 	return view
 }
 
 func (m Model) renderHeader() string {
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Render("sessionport")
-	subtitle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("project/session/mcp/skills")
-	if m.loading {
-		subtitle = lipgloss.NewStyle().Foreground(lipgloss.Color("172")).Render("loading workspace snapshot...")
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("45")).Render(appName)
+	project := "project: n/a"
+	if m.snapshot.Detect.ProjectRoot != "" {
+		project = "project: " + shortPath(m.snapshot.Detect.ProjectRoot)
 	}
-	if m.err != nil {
-		subtitle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(m.err.Error())
+	subtitle := lipgloss.NewStyle().Foreground(lipgloss.Color("248")).Render(project)
+	pills := []string{
+		badgeStyle("section "+m.activeSectionName(), "accent"),
+		badgeStyle("focus "+m.focusName(), "muted"),
+		badgeStyle("target "+string(m.targetTool()), "warning"),
 	}
-	tool := m.activeTool
-	if tool == "" {
-		tool = "codex"
+	if m.searchQuery != "" {
+		pills = append(pills, badgeStyle("search "+m.searchQuery, "muted"))
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Center, title, " ", subtitle, " ", lipgloss.NewStyle().Foreground(lipgloss.Color("110")).Render("["+tool+"]"))
+	if m.task.kind != "" {
+		pills = append(pills, badgeStyle(m.spinnerFrame()+" "+m.task.label, "success"))
+	}
+	if m.lastErr != nil {
+		pills = append(pills, badgeStyle(m.lastErr.Error(), "error"))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		lipgloss.JoinHorizontal(lipgloss.Center, title, "  ", subtitle),
+		lipgloss.JoinHorizontal(lipgloss.Left, pills...),
+	)
 }
 
-func (m Model) renderColumns() string {
-	left := m.panel("Project", m.renderProjects())
-	middle := m.panel("Sessions", m.renderSessions())
-	right := m.panel("MCP", m.renderMCP())
-	bottom := m.panel("Skills", m.renderSkills()) + "\n" + m.panel("Logs", m.renderLogs())
+func (m Model) renderBody() string {
+	layout := m.currentLayout()
 
-	top := lipgloss.JoinHorizontal(lipgloss.Top, left, middle, right)
-	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+	switch layout.mode {
+	case layoutWide:
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			m.renderPanel("Workspace", m.renderNav(layout.nav), layout.nav.W, layout.nav.H, m.focus == focusNav),
+			m.renderPanel(m.listPanelTitle(), m.renderList(layout.list), layout.list.W, layout.list.H, m.focus == focusList),
+			m.renderPanel(m.previewPanelTitle(), m.renderPreview(layout.preview), layout.preview.W, layout.preview.H, m.focus == focusPreview),
+		)
+	case layoutMedium:
+		right := lipgloss.JoinVertical(lipgloss.Left,
+			m.renderPanel(m.listPanelTitle(), m.renderList(layout.list), layout.list.W, layout.list.H, m.focus == focusList),
+			m.renderPanel(m.previewPanelTitle(), m.renderPreview(layout.preview), layout.preview.W, layout.preview.H, m.focus == focusPreview),
+		)
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			m.renderPanel("Workspace", m.renderNav(layout.nav), layout.nav.W, layout.nav.H, m.focus == focusNav),
+			right,
+		)
+	default:
+		nav := m.renderPanel("Workspace", m.renderNav(layout.nav), layout.nav.W, layout.nav.H, m.focus == focusNav)
+		title := m.listPanelTitle()
+		content := m.renderList(layout.list)
+		active := m.focus != focusPreview
+		if m.focus == focusPreview {
+			title = m.previewPanelTitle()
+			content = m.renderPreview(layout.preview)
+			active = true
+		}
+		panel := m.renderPanel(title, content, layout.list.W, layout.list.H, active)
+		return lipgloss.JoinVertical(lipgloss.Left, nav, panel)
+	}
 }
 
-func (m Model) panel(title, body string) string {
+func (m Model) renderStatusBar() string {
+	left := []string{
+		fmt.Sprintf("%d sessions", m.snapshot.HealthSummary.SessionCount),
+		fmt.Sprintf("%d projects", len(m.filteredProjects())),
+		fmt.Sprintf("%d skills", len(m.filteredSkills())),
+		fmt.Sprintf("%d mcp", len(m.filteredMCP())),
+	}
+	if m.searchMode {
+		left = append(left, "search typing...")
+	}
+	right := m.contextActions()
+	bar := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("236")).
+		Padding(0, 1)
+	return bar.Width(maxInt(0, m.width)).Render(strings.Join(left, " | ") + "    " + right)
+}
+
+func (m Model) renderHelp() string {
+	lines := []string{
+		"Keys",
+		"tab / shift+tab  move focus",
+		"j/k or up/down   move selection",
+		"/                filter current section",
+		"[ / ]            switch preview tab",
+		"t / T            cycle export target",
+		"r                refresh workspace",
+		"mouse click      focus pane / choose item / switch tab",
+		"mouse wheel      scroll list selection or preview content",
+		"i                import session",
+		"d                doctor selected session",
+		"e                export selected session",
+		"I                install selected skill",
+		"p                validate selected mcp config",
+		"? or esc         close help",
+		"q                quit",
+	}
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("45")).
+		Padding(0, 1)
+	return style.Width(maxInt(48, m.width-4)).Render(strings.Join(lines, "\n"))
+}
+
+func (m Model) renderPanel(title string, body string, width int, height int, focused bool) string {
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("238")).
-		Padding(0, 1)
-	if m.isActivePane(title) {
-		style = style.BorderForeground(lipgloss.Color("33"))
+		Padding(0, 1).
+		Width(maxInt(12, width)).
+		Height(maxInt(4, height))
+	if focused {
+		style = style.BorderForeground(lipgloss.Color("45"))
 	}
-	if body == "" {
-		body = " "
-	}
-	return style.Width(m.panelWidth()).Render(title + "\n" + body)
+	bodyLines := maxInt(1, height-3)
+	return style.Render(title + "\n" + fitLines(body, bodyLines))
 }
 
-func (m Model) panelWidth() int {
-	if m.width <= 0 {
-		return 32
+func (m Model) renderNav(panel rect) string {
+	if m.layoutMode() == layoutNarrow {
+		return m.renderNavCompact()
 	}
-	return maxInt(28, (m.width/3)-6)
-}
-
-func (m Model) renderProjects() string {
-	lines := []string{
-		fmt.Sprintf("cwd: %s", shortPath(m.detect.CWD)),
-		fmt.Sprintf("project: %s", shortPath(m.detect.ProjectRoot)),
-	}
-	if len(m.detect.Tools) > 0 {
-		lines = append(lines, "")
-		for _, tool := range m.detect.Tools {
-			status := "missing"
-			if tool.Installed {
-				status = "ready"
-			}
-			lines = append(lines, fmt.Sprintf("%s: %s", strings.ToUpper(tool.Tool), status))
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (m Model) renderSessions() string {
-	report := m.currentInspect()
-	if len(report.Sessions) == 0 {
-		return "no sessions"
-	}
-	lines := make([]string, 0, len(report.Sessions)*2)
-	for i, session := range report.Sessions {
+	lines := make([]string, 0, len(sectionOrder)+4)
+	lines = append(lines,
+		fmt.Sprintf("cwd: %s", shortPath(m.snapshot.Detect.CWD)),
+		fmt.Sprintf("root: %s", shortPath(m.snapshot.Detect.ProjectRoot)),
+		"",
+	)
+	for _, section := range sectionOrder {
 		prefix := "  "
-		if i == m.sessionIdx {
+		if section == m.activeSection {
 			prefix = "> "
 		}
-		title := session.Title
-		if title == "" {
-			title = session.ID
-		}
-		lines = append(lines, fmt.Sprintf("%s%s", prefix, title))
-		lines = append(lines, fmt.Sprintf("   %s", shortPath(session.StoragePath)))
+		lines = append(lines, fmt.Sprintf("%s%s", prefix, m.navLabel(section)))
+	}
+	if m.snapshot.HealthSummary.BrokenMCP > 0 {
+		lines = append(lines, "", fmt.Sprintf("degraded mcp: %d", m.snapshot.HealthSummary.BrokenMCP))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderMCP() string {
-	if len(m.mcp) == 0 {
-		return "no MCP profiles"
-	}
-	lines := make([]string, 0, len(m.mcp)*2)
-	for _, item := range m.mcp {
-		lines = append(lines, fmt.Sprintf("%s [%s]", item.Name, item.Status))
-		if item.Path != "" {
-			lines = append(lines, "  "+shortPath(item.Path))
+func (m Model) renderNavCompact() string {
+	segments := make([]string, 0, len(sectionOrder))
+	for _, section := range sectionOrder {
+		label := m.navLabel(section)
+		tone := "muted"
+		if section == m.activeSection {
+			tone = "accent"
 		}
+		segments = append(segments, badgeStyle(label, tone))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Left, segments...)
+}
+
+func (m Model) navLabel(section workspaceSection) string {
+	switch section {
+	case sectionSessions:
+		return fmt.Sprintf("Sessions %d", len(m.filteredSessions()))
+	case sectionProjects:
+		return fmt.Sprintf("Projects %d", len(m.filteredProjects()))
+	case sectionSkills:
+		return fmt.Sprintf("Skills %d", len(m.filteredSkills()))
+	case sectionMCP:
+		return fmt.Sprintf("MCP %d", len(m.filteredMCP()))
+	default:
+		return fmt.Sprintf("Logs %d", len(m.filteredLogs()))
+	}
+}
+
+func (m Model) listPanelTitle() string {
+	switch m.activeSection {
+	case sectionSessions:
+		return "Sessions"
+	case sectionProjects:
+		return "Projects"
+	case sectionSkills:
+		return "Skills"
+	case sectionMCP:
+		return "MCP"
+	default:
+		return "Logs"
+	}
+}
+
+func (m Model) previewPanelTitle() string {
+	switch m.activeSection {
+	case sectionSessions:
+		return "Preview " + m.previewTabLabel()
+	case sectionProjects:
+		return "Project"
+	case sectionSkills:
+		return "Skill " + m.previewTabLabel()
+	case sectionMCP:
+		return "MCP " + m.previewTabLabel()
+	default:
+		return "Log Detail"
+	}
+}
+
+func (m Model) renderList(panel rect) string {
+	bodyHeight := panelBodyHeight(panel)
+	switch m.activeSection {
+	case sectionSessions:
+		return m.renderSessionList(bodyHeight)
+	case sectionProjects:
+		return m.renderProjectList(bodyHeight)
+	case sectionSkills:
+		return m.renderSkillList(bodyHeight)
+	case sectionMCP:
+		return m.renderMCPList(bodyHeight)
+	default:
+		return m.renderLogList(bodyHeight)
+	}
+}
+
+func (m Model) renderSessionList(height int) string {
+	items := m.filteredSessions()
+	if len(items) == 0 {
+		return "no sessions"
+	}
+	offset, visible := m.listWindow(len(items), 2, height, m.sessionIdx, m.sessionListOffset)
+	m.sessionListOffset = offset
+	lines := make([]string, 0, visible*2)
+	for i := 0; i < visible; i++ {
+		item := items[offset+i]
+		entry := m.sessionListItem(item)
+		prefix := "  "
+		if offset+i == clampIndex(m.sessionIdx, len(items)) {
+			prefix = "> "
+		}
+		lines = append(lines, prefix+entry.title+"  "+renderBadges(entry.badges))
+		lines = append(lines, "  "+firstNonEmpty(entry.subtitle, " "))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderSkills() string {
-	if len(m.skills) == 0 {
-		return "no skills found"
+func (m Model) renderProjectList(height int) string {
+	items := m.filteredProjects()
+	if len(items) == 0 {
+		return "no projects"
 	}
-	lines := make([]string, 0, len(m.skills)*2)
-	for _, skill := range m.skills {
-		lines = append(lines, skill.Name)
-		if skill.Description != "" {
-			lines = append(lines, "  "+skill.Description)
+	offset, visible := m.listWindow(len(items), 2, height, m.projectIdx, m.projectListOffset)
+	m.projectListOffset = offset
+	lines := make([]string, 0, visible*2)
+	for i := 0; i < visible; i++ {
+		item := items[offset+i]
+		entry := m.projectListItem(item)
+		prefix := "  "
+		if offset+i == clampIndex(m.projectIdx, len(items)) {
+			prefix = "> "
 		}
+		lines = append(lines, prefix+entry.title+"  "+renderBadges(entry.badges))
+		lines = append(lines, "  "+firstNonEmpty(entry.subtitle, " "))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderLogs() string {
-	if len(m.logs) == 0 {
+func (m Model) renderSkillList(height int) string {
+	items := m.filteredSkills()
+	if len(items) == 0 {
+		return "no skills"
+	}
+	offset, visible := m.listWindow(len(items), 2, height, m.skillIdx, m.skillListOffset)
+	m.skillListOffset = offset
+	lines := make([]string, 0, visible*2)
+	for i := 0; i < visible; i++ {
+		item := items[offset+i]
+		entry := m.skillListItem(item)
+		prefix := "  "
+		if offset+i == clampIndex(m.skillIdx, len(items)) {
+			prefix = "> "
+		}
+		lines = append(lines, prefix+entry.title+"  "+renderBadges(entry.badges))
+		lines = append(lines, "  "+firstNonEmpty(entry.subtitle, " "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderMCPList(height int) string {
+	items := m.filteredMCP()
+	if len(items) == 0 {
+		return "no mcp profiles"
+	}
+	offset, visible := m.listWindow(len(items), 2, height, m.mcpIdx, m.mcpListOffset)
+	m.mcpListOffset = offset
+	lines := make([]string, 0, visible*2)
+	for i := 0; i < visible; i++ {
+		item := items[offset+i]
+		entry := m.mcpListItem(item)
+		prefix := "  "
+		if offset+i == clampIndex(m.mcpIdx, len(items)) {
+			prefix = "> "
+		}
+		lines = append(lines, prefix+entry.title+"  "+renderBadges(entry.badges))
+		lines = append(lines, "  "+firstNonEmpty(entry.subtitle, " "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderLogList(height int) string {
+	items := m.filteredLogs()
+	if len(items) == 0 {
 		return "idle"
 	}
-	start := 0
-	if len(m.logs) > 5 {
-		start = len(m.logs) - 5
+	offset, visible := m.listWindow(len(items), 1, height, m.logIdx, m.logListOffset)
+	m.logListOffset = offset
+	lines := make([]string, 0, visible)
+	for i := 0; i < visible; i++ {
+		prefix := "  "
+		if offset+i == clampIndex(m.logIdx, len(items)) {
+			prefix = "> "
+		}
+		lines = append(lines, prefix+items[offset+i])
 	}
-	return strings.Join(m.logs[start:], "\n")
+	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderFooter() string {
-	current := m.currentInspect()
-	session := ""
-	if len(current.Sessions) > 0 && m.sessionIdx >= 0 && m.sessionIdx < len(current.Sessions) {
-		session = current.Sessions[m.sessionIdx].ID
+func (m Model) renderPreview(panel rect) string {
+	bodyHeight := panelBodyHeight(panel)
+	if m.activeSection == sectionLogs || m.activeSection == sectionProjects {
+		content := m.renderLogPreview()
+		if m.activeSection == sectionProjects {
+			content = m.renderProjectPreview()
+		}
+		lines, offset := m.previewLines(bodyHeight, content)
+		m.setPreviewOffset(offset)
+		return strings.Join(lines, "\n")
 	}
-	target := m.targetTool()
-	bundle := "none"
-	if m.bundle != nil {
-		bundle = m.bundle.BundleID
+
+	tabLine, _ := m.renderPreviewTabs()
+	contentHeight := maxInt(0, bodyHeight-1)
+	lines, offset := m.previewLines(contentHeight, m.previewContent())
+	m.setPreviewOffset(offset)
+	if contentHeight == 0 {
+		return tabLine
 	}
-	return fmt.Sprintf("view=%s tool=%s session=%s target=%s bundle=%s", m.activeViewName(), m.activeTool, session, target, bundle)
+	return tabLine + "\n" + strings.Join(lines, "\n")
 }
 
-func (m Model) loadSnapshotCmd() tea.Cmd {
-	if m.backend.Detect == nil {
+func (m Model) renderSessionPreview() string {
+	item, ok := m.selectedSession()
+	if !ok {
+		return "Select a session."
+	}
+	key := sessionKeyFor(item.Tool, item.Session.ID)
+	bundle, hasBundle := m.bundleBySession[key]
+	report, hasDoctor := m.doctorByKey[doctorKey(key, m.targetTool())]
+	manifest, hasExport := m.exportByKey[doctorKey(key, m.targetTool())]
+
+	switch m.currentPreviewTab() {
+	case previewRaw:
+		payload := map[string]any{
+			"tool":    item.Tool,
+			"session": item.Session,
+			"notes":   item.Report.Notes,
+		}
+		if hasBundle {
+			payload["bundle"] = bundle
+		}
+		return mustJSON(payload)
+	case previewDoctor:
+		if !hasDoctor {
+			return "Doctor report not generated yet. Press d to analyze the selected session."
+		}
+		return mustJSON(report)
+	default:
+		lines := []string{
+			fmt.Sprintf("Title: %s", firstNonEmpty(item.Session.Title, item.Session.ID)),
+			fmt.Sprintf("Tool: %s", item.Tool),
+			fmt.Sprintf("Session ID: %s", item.Session.ID),
+			fmt.Sprintf("Project: %s", shortPath(item.Session.ProjectRoot)),
+			fmt.Sprintf("Updated: %s", firstNonEmpty(item.Session.UpdatedAt, "unknown")),
+			fmt.Sprintf("Started: %s", firstNonEmpty(item.Session.StartedAt, "unknown")),
+			fmt.Sprintf("Storage: %s", shortPath(item.Session.StoragePath)),
+			fmt.Sprintf("Messages: %d", item.Session.MessageCount),
+		}
+		if hasBundle {
+			lines = append(lines, "",
+				"Imported Bundle",
+				fmt.Sprintf("Bundle ID: %s", firstNonEmpty(bundle.BundleID, "(not assigned)")),
+				fmt.Sprintf("Goal: %s", firstNonEmpty(bundle.CurrentGoal, "(none)")),
+				fmt.Sprintf("Touched files: %d", len(bundle.TouchedFiles)),
+				fmt.Sprintf("Decisions: %d", len(bundle.Decisions)),
+				fmt.Sprintf("Warnings: %d", len(bundle.Warnings)),
+			)
+		}
+		if hasDoctor {
+			lines = append(lines, "",
+				"Doctor",
+				fmt.Sprintf("Compatible: %d", len(report.CompatibleFields)),
+				fmt.Sprintf("Partial: %d", len(report.PartialFields)),
+				fmt.Sprintf("Unsupported: %d", len(report.UnsupportedFields)),
+			)
+		}
+		if hasExport {
+			lines = append(lines, "",
+				"Last Export",
+				fmt.Sprintf("Output: %s", shortPath(manifest.OutputDir)),
+				fmt.Sprintf("Files: %d", len(manifest.Files)),
+			)
+		}
+		if len(item.Report.Notes) > 0 {
+			lines = append(lines, "", "Inspect Notes")
+			for _, note := range item.Report.Notes {
+				lines = append(lines, "- "+note)
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
+}
+
+func (m Model) renderSkillPreview() string {
+	item, ok := m.selectedSkill()
+	if !ok {
+		return "Select a skill."
+	}
+	install, hasInstall := m.installByPath[item.Path]
+	switch m.currentPreviewTab() {
+	case previewContent:
+		if strings.TrimSpace(item.Content) == "" {
+			return "Skill content unavailable."
+		}
+		return item.Content
+	default:
+		lines := []string{
+			fmt.Sprintf("Name: %s", item.Name),
+			fmt.Sprintf("Source: %s", item.Source),
+			fmt.Sprintf("Path: %s", shortPath(item.Path)),
+			fmt.Sprintf("Description: %s", firstNonEmpty(item.Description, "(none)")),
+		}
+		if hasInstall {
+			lines = append(lines, "",
+				"Last Install",
+				fmt.Sprintf("Installed path: %s", shortPath(install.InstalledPath)),
+				fmt.Sprintf("Overwrote: %t", install.Overwrote),
+			)
+			for _, warning := range install.Warnings {
+				lines = append(lines, "- "+warning)
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
+}
+
+func (m Model) renderProjectPreview() string {
+	item, ok := m.selectedProject()
+	if !ok {
+		return "Select a project."
+	}
+	lines := []string{
+		fmt.Sprintf("Name: %s", item.Name),
+		fmt.Sprintf("Root: %s", shortPath(item.Root)),
+		fmt.Sprintf("Workspace root: %s", shortPath(item.WorkspaceRoot)),
+		fmt.Sprintf("Sessions: %d", item.SessionCount),
+		fmt.Sprintf("Skills: %d", item.SkillCount),
+		fmt.Sprintf("MCP configs: %d", item.MCPCount),
+	}
+	if len(item.Markers) > 0 {
+		lines = append(lines, "", "Markers")
+		for _, marker := range item.Markers {
+			lines = append(lines, "- "+marker)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderMCPPreview() string {
+	item, ok := m.selectedMCP()
+	if !ok {
+		return "Select an MCP profile."
+	}
+	probe, hasProbe := m.probeByPath[item.Path]
+	switch m.currentPreviewTab() {
+	case previewRaw:
+		if strings.TrimSpace(item.RawConfig) == "" {
+			return "Config content unavailable."
+		}
+		return item.RawConfig
+	case previewLive:
+		if !hasProbe {
+			return "No validation result yet. Press p to validate the selected MCP profile."
+		}
+		return mustJSON(probe)
+	default:
+		lines := []string{
+			fmt.Sprintf("Name: %s", item.Name),
+			fmt.Sprintf("Tool: %s", firstNonEmpty(string(item.Tool), "(shared)")),
+			fmt.Sprintf("Source: %s", item.Source),
+			fmt.Sprintf("Path: %s", shortPath(item.Path)),
+			fmt.Sprintf("Status: %s", item.Status),
+			fmt.Sprintf("Format: %s", firstNonEmpty(item.Format, "(unknown)")),
+			fmt.Sprintf("Parse source: %s", firstNonEmpty(item.ParseSource, "(none)")),
+			fmt.Sprintf("Declared servers: %d", item.DeclaredServers),
+			fmt.Sprintf("Tool binary: %s", boolLabel(item.BinaryFound, firstNonEmpty(item.BinaryPath, "found"), "missing")),
+			fmt.Sprintf("Details: %s", firstNonEmpty(item.Details, "(none)")),
+		}
+		if len(item.ServerNames) > 0 {
+			lines = append(lines, "", "Server Names")
+			for _, name := range item.ServerNames {
+				lines = append(lines, "- "+name)
+			}
+		}
+		if len(item.ParseWarnings) > 0 {
+			lines = append(lines, "", "Parse Warnings")
+			for _, warning := range item.ParseWarnings {
+				lines = append(lines, "- "+warning)
+			}
+		}
+		if hasProbe {
+			lines = append(lines, "",
+				"Validation",
+				fmt.Sprintf("Mode: %s", firstNonEmpty(probe.Mode, "config-only")),
+				fmt.Sprintf("Reachable: %t", probe.Reachable),
+				fmt.Sprintf("Connected servers: %d", probe.ConnectedServers),
+				fmt.Sprintf("Latency: %s", firstNonEmpty(probe.Latency, "n/a")),
+				fmt.Sprintf("Resources: %d", probe.ResourceCount),
+				fmt.Sprintf("Templates: %d", probe.TemplateCount),
+				fmt.Sprintf("Tools: %d", probe.ToolCount),
+				fmt.Sprintf("Prompts: %d", probe.PromptCount),
+			)
+			for _, warning := range probe.Warnings {
+				lines = append(lines, "- "+warning)
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
+}
+
+func (m Model) renderLogPreview() string {
+	items := m.filteredLogs()
+	if len(items) == 0 {
+		return "idle"
+	}
+	idx := clampIndex(m.logIdx, len(items))
+	return items[idx]
+}
+
+func (m Model) previewContent() string {
+	switch m.activeSection {
+	case sectionSessions:
+		return m.renderSessionPreview()
+	case sectionProjects:
+		return m.renderProjectPreview()
+	case sectionSkills:
+		return m.renderSkillPreview()
+	case sectionMCP:
+		return m.renderMCPPreview()
+	default:
+		return m.renderLogPreview()
+	}
+}
+
+func (m Model) renderPreviewTabs() (string, []previewTabHit) {
+	if m.activeSection == sectionLogs || m.activeSection == sectionProjects {
+		return "", nil
+	}
+	tabs := m.currentSectionTabs()
+	active := m.currentPreviewTab()
+	parts := make([]string, 0, len(tabs))
+	hits := make([]previewTabHit, 0, len(tabs))
+	x := 0
+	for _, tab := range tabs {
+		label := "[" + string(tab) + "]"
+		tone := "muted"
+		if tab == active {
+			tone = "accent"
+		}
+		rendered := badgeStyle(label, tone)
+		parts = append(parts, rendered)
+		width := lipgloss.Width(rendered)
+		hits = append(hits, previewTabHit{Tab: tab, Start: x, End: x + width})
+		x += width
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Left, parts...), hits
+}
+
+func (m Model) loadWorkspaceCmd() tea.Cmd {
+	if m.backend.LoadWorkspaceSnapshot == nil {
 		return nil
 	}
 	return func() tea.Msg {
-		detectReport, err := m.backend.Detect(m.ctx)
+		snapshot, err := m.backend.LoadWorkspaceSnapshot(m.ctx)
 		if err != nil {
 			return errorMsg{err: err}
 		}
-		skills := []SkillEntry{}
-		if m.backend.ScanSkills != nil {
-			skills, err = m.backend.ScanSkills(m.ctx)
-			if err != nil {
-				return errorMsg{err: err}
-			}
-		}
-		mcp := []MCPEntry{}
-		if m.backend.ScanMCP != nil {
-			mcp, err = m.backend.ScanMCP(m.ctx)
-			if err != nil {
-				return errorMsg{err: err}
-			}
-		}
-		return snapshotMsg{detect: detectReport, skills: skills, mcp: mcp}
+		return snapshotLoadedMsg{snapshot: snapshot}
 	}
-}
-
-func (m Model) inspectToolCmd(tool string) tea.Cmd {
-	if m.backend.Inspect == nil || tool == "" {
-		return nil
-	}
-	return func() tea.Msg {
-		report, err := m.backend.Inspect(m.ctx, tool)
-		if err != nil {
-			return errorMsg{err: err}
-		}
-		return inspectMsg{tool: tool, report: report}
-	}
-}
-
-func (m Model) refreshSelectedToolCmd() tea.Cmd {
-	return m.inspectToolCmd(m.activeTool)
 }
 
 func (m Model) importSelectedCmd() tea.Cmd {
-	if m.backend.Import == nil {
+	if m.backend.ImportSession == nil {
 		return nil
 	}
-	report := m.currentInspect()
-	if len(report.Sessions) == 0 || m.sessionIdx < 0 || m.sessionIdx >= len(report.Sessions) {
+	item, ok := m.selectedSession()
+	if !ok {
 		return nil
 	}
-	session := report.Sessions[m.sessionIdx]
 	return func() tea.Msg {
-		bundle, err := m.backend.Import(m.ctx, m.activeTool, session.ID)
+		bundle, err := m.backend.ImportSession(m.ctx, item.Tool, item.Session.ID)
 		if err != nil {
 			return errorMsg{err: err}
 		}
-		return bundleMsg{bundle: bundle}
-	}
-}
-
-func (m Model) exportSelectedCmd() tea.Cmd {
-	if m.backend.Export == nil || m.bundle == nil {
-		return nil
-	}
-	target := m.targetTool()
-	if target == "" {
-		return nil
-	}
-	outDir := m.backend.DefaultExportDir
-	if outDir == "" {
-		outDir = filepath.Join(os.TempDir(), "sessionport-export")
-	}
-	return func() tea.Msg {
-		manifest, err := m.backend.Export(m.ctx, *m.bundle, domain.Tool(target), outDir)
-		if err != nil {
-			return errorMsg{err: err}
+		return bundleImportedMsg{
+			sessionKey: sessionKeyFor(item.Tool, item.Session.ID),
+			bundle:     bundle,
+			autoDoctor: true,
 		}
-		return exportMsg{manifest: manifest}
 	}
 }
 
 func (m Model) doctorSelectedCmd() tea.Cmd {
-	if m.backend.Doctor == nil || m.bundle == nil {
+	if m.backend.DoctorBundle == nil {
 		return nil
 	}
+	item, ok := m.selectedSession()
+	if !ok {
+		return nil
+	}
+	sessionKey := sessionKeyFor(item.Tool, item.Session.ID)
 	target := m.targetTool()
-	if target == "" {
-		return nil
-	}
+	cachedBundle, hasBundle := m.bundleBySession[sessionKey]
 	return func() tea.Msg {
-		report, err := m.backend.Doctor(m.ctx, *m.bundle, domain.Tool(target))
+		bundle := cachedBundle
+		var bundlePtr *domain.SessionBundle
+		if !hasBundle {
+			if m.backend.ImportSession == nil {
+				return errorMsg{err: fmt.Errorf("import backend is required to run doctor on %s", item.Session.ID)}
+			}
+			imported, err := m.backend.ImportSession(m.ctx, item.Tool, item.Session.ID)
+			if err != nil {
+				return errorMsg{err: err}
+			}
+			bundle = imported
+			bundlePtr = &imported
+		}
+		report, err := m.backend.DoctorBundle(m.ctx, bundle, target)
 		if err != nil {
 			return errorMsg{err: err}
 		}
-		return bundleDoctorMsg{report: report}
+		return doctorReadyMsg{
+			sessionKey: sessionKey,
+			target:     target,
+			bundle:     bundlePtr,
+			report:     report,
+		}
 	}
 }
 
-type bundleDoctorMsg struct {
-	report domain.CompatibilityReport
-}
-
-func (m Model) currentInspect() inspect.Report {
-	if report, ok := m.inspectByTool[m.activeTool]; ok {
-		return report
+func (m Model) exportSelectedCmd() tea.Cmd {
+	if m.backend.ExportBundle == nil || m.backend.DoctorBundle == nil {
+		return nil
 	}
-	return inspect.Report{Tool: m.activeTool}
+	item, ok := m.selectedSession()
+	if !ok {
+		return nil
+	}
+	sessionKey := sessionKeyFor(item.Tool, item.Session.ID)
+	target := m.targetTool()
+	cachedBundle, hasBundle := m.bundleBySession[sessionKey]
+	cachedDoctor, hasDoctor := m.doctorByKey[doctorKey(sessionKey, target)]
+	outDir := exportOutputDir(m.backend.DefaultExportDir, item.Session.ID, target)
+
+	return func() tea.Msg {
+		bundle := cachedBundle
+		if !hasBundle {
+			if m.backend.ImportSession == nil {
+				return errorMsg{err: fmt.Errorf("import backend is required to export %s", item.Session.ID)}
+			}
+			imported, err := m.backend.ImportSession(m.ctx, item.Tool, item.Session.ID)
+			if err != nil {
+				return errorMsg{err: err}
+			}
+			bundle = imported
+		}
+		report := cachedDoctor
+		if !hasDoctor {
+			generated, err := m.backend.DoctorBundle(m.ctx, bundle, target)
+			if err != nil {
+				return errorMsg{err: err}
+			}
+			report = generated
+		}
+		manifest, err := m.backend.ExportBundle(m.ctx, bundle, target, outDir)
+		if err != nil {
+			return errorMsg{err: err}
+		}
+		return exportReadyMsg{
+			sessionKey: sessionKey,
+			target:     target,
+			bundle:     bundle,
+			report:     report,
+			manifest:   manifest,
+		}
+	}
 }
 
-func (m Model) toolAvailable(tool string) bool {
-	for _, item := range m.detect.Tools {
-		if item.Tool == tool && item.Installed {
+func (m Model) installSelectedSkillCmd() tea.Cmd {
+	if m.backend.InstallSkill == nil {
+		return nil
+	}
+	item, ok := m.selectedSkill()
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		result, err := m.backend.InstallSkill(m.ctx, item)
+		if err != nil {
+			return errorMsg{err: err}
+		}
+		return skillInstalledMsg{skill: item, result: result}
+	}
+}
+
+func (m Model) probeSelectedMCP() tea.Cmd {
+	if m.backend.ProbeMCP == nil {
+		return nil
+	}
+	item, ok := m.selectedMCP()
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		result, err := m.backend.ProbeMCP(m.ctx, item)
+		if err != nil {
+			return errorMsg{err: err}
+		}
+		return mcpProbedMsg{entry: item, result: result}
+	}
+}
+
+func (m *Model) moveSelection(delta int) {
+	switch m.focus {
+	case focusNav:
+		idx := indexOfSection(sectionOrder, m.activeSection)
+		m.setActiveSection(sectionOrder[wrapIndex(idx+delta, len(sectionOrder))])
+		return
+	case focusPreview:
+		m.scrollPreview(delta * 2)
+		return
+	}
+
+	switch m.activeSection {
+	case sectionSessions:
+		m.setSessionIndex(clampIndex(m.sessionIdx+delta, len(m.filteredSessions())))
+	case sectionProjects:
+		m.setProjectIndex(clampIndex(m.projectIdx+delta, len(m.filteredProjects())))
+	case sectionSkills:
+		m.setSkillIndex(clampIndex(m.skillIdx+delta, len(m.filteredSkills())))
+	case sectionMCP:
+		m.setMCPIndex(clampIndex(m.mcpIdx+delta, len(m.filteredMCP())))
+	case sectionLogs:
+		m.setLogIndex(clampIndex(m.logIdx+delta, len(m.filteredLogs())))
+	}
+	m.ensureVisibleSelection()
+}
+
+func (m *Model) movePreviewTab(delta int) {
+	switch m.activeSection {
+	case sectionSessions:
+		m.sessionTabIdx = wrapIndex(m.sessionTabIdx+delta, len(sessionPreviewTabs))
+	case sectionSkills:
+		m.skillTabIdx = wrapIndex(m.skillTabIdx+delta, len(skillPreviewTabs))
+	case sectionMCP:
+		m.mcpTabIdx = wrapIndex(m.mcpTabIdx+delta, len(mcpPreviewTabs))
+	}
+	m.resetPreviewScroll()
+}
+
+func (m *Model) scrollPreview(delta int) {
+	lines := strings.Split(m.previewContent(), "\n")
+	layout := m.currentLayout()
+	visible := panelBodyHeight(layout.preview)
+	if m.activeSection != sectionLogs {
+		visible = maxInt(0, visible-1)
+	}
+	maxOffset := maxInt(0, len(lines)-visible)
+	offset := clampIndex(m.currentPreviewOffset()+delta, maxOffset+1)
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	m.setPreviewOffset(offset)
+}
+
+func (m *Model) ensureValidSelection() {
+	m.sessionIdx = clampIndex(m.sessionIdx, len(m.filteredSessions()))
+	m.projectIdx = clampIndex(m.projectIdx, len(m.filteredProjects()))
+	m.skillIdx = clampIndex(m.skillIdx, len(m.filteredSkills()))
+	m.mcpIdx = clampIndex(m.mcpIdx, len(m.filteredMCP()))
+	m.logIdx = clampIndex(m.logIdx, len(m.filteredLogs()))
+}
+
+func (m *Model) ensureSectionWithContent() {
+	if m.sectionCount(m.activeSection) > 0 {
+		return
+	}
+	for _, section := range sectionOrder {
+		if m.sectionCount(section) > 0 {
+			m.setActiveSection(section)
+			return
+		}
+	}
+}
+
+func (m *Model) ensureVisibleSelection() {
+	layout := m.currentLayout()
+	switch m.activeSection {
+	case sectionSessions:
+		m.sessionListOffset = ensureWindowOffset(m.sessionListOffset, len(m.filteredSessions()), 2, panelBodyHeight(layout.list), m.sessionIdx)
+	case sectionProjects:
+		m.projectListOffset = ensureWindowOffset(m.projectListOffset, len(m.filteredProjects()), 2, panelBodyHeight(layout.list), m.projectIdx)
+	case sectionSkills:
+		m.skillListOffset = ensureWindowOffset(m.skillListOffset, len(m.filteredSkills()), 2, panelBodyHeight(layout.list), m.skillIdx)
+	case sectionMCP:
+		m.mcpListOffset = ensureWindowOffset(m.mcpListOffset, len(m.filteredMCP()), 2, panelBodyHeight(layout.list), m.mcpIdx)
+	case sectionLogs:
+		m.logListOffset = ensureWindowOffset(m.logListOffset, len(m.filteredLogs()), 1, panelBodyHeight(layout.list), m.logIdx)
+	}
+}
+
+func (m Model) filteredSessions() []sessionItem {
+	items := []sessionItem{}
+	for _, tool := range toolOrder {
+		report, ok := m.snapshot.InspectByTool[tool]
+		if !ok {
+			continue
+		}
+		for _, session := range report.Sessions {
+			if matchesQuery(m.searchQuery, string(tool), session.Title, session.ID, session.ProjectRoot, session.StoragePath) {
+				items = append(items, sessionItem{Tool: tool, Report: report, Session: session})
+			}
+		}
+	}
+	return items
+}
+
+func (m Model) filteredProjects() []ProjectEntry {
+	items := make([]ProjectEntry, 0, len(m.snapshot.Projects))
+	for _, item := range m.snapshot.Projects {
+		if matchesQuery(m.searchQuery, item.Name, item.Root, item.WorkspaceRoot, strings.Join(item.Markers, " ")) {
+			items = append(items, item)
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Name == items[j].Name {
+			return items[i].Root < items[j].Root
+		}
+		return items[i].Name < items[j].Name
+	})
+	return items
+}
+
+func (m Model) filteredSkills() []SkillEntry {
+	items := make([]SkillEntry, 0, len(m.snapshot.Skills))
+	for _, item := range m.snapshot.Skills {
+		if matchesQuery(m.searchQuery, item.Name, item.Description, item.Path, item.Source) {
+			items = append(items, item)
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Name == items[j].Name {
+			return items[i].Path < items[j].Path
+		}
+		return items[i].Name < items[j].Name
+	})
+	return items
+}
+
+func (m Model) filteredMCP() []MCPEntry {
+	items := make([]MCPEntry, 0, len(m.snapshot.MCPProfiles))
+	for _, item := range m.snapshot.MCPProfiles {
+		if matchesQuery(m.searchQuery, item.Name, item.Path, item.Source, item.Status, item.Details, string(item.Tool), strings.Join(item.ServerNames, " ")) {
+			items = append(items, item)
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Tool == items[j].Tool {
+			return items[i].Path < items[j].Path
+		}
+		return items[i].Tool < items[j].Tool
+	})
+	return items
+}
+
+func (m Model) filteredLogs() []string {
+	if m.searchQuery == "" {
+		return append([]string{}, m.logs...)
+	}
+	out := []string{}
+	for _, line := range m.logs {
+		if matchesQuery(m.searchQuery, line) {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func (m Model) selectedSession() (sessionItem, bool) {
+	items := m.filteredSessions()
+	if len(items) == 0 {
+		return sessionItem{}, false
+	}
+	return items[clampIndex(m.sessionIdx, len(items))], true
+}
+
+func (m Model) selectedSkill() (SkillEntry, bool) {
+	items := m.filteredSkills()
+	if len(items) == 0 {
+		return SkillEntry{}, false
+	}
+	return items[clampIndex(m.skillIdx, len(items))], true
+}
+
+func (m Model) selectedProject() (ProjectEntry, bool) {
+	items := m.filteredProjects()
+	if len(items) == 0 {
+		return ProjectEntry{}, false
+	}
+	return items[clampIndex(m.projectIdx, len(items))], true
+}
+
+func (m Model) selectedMCP() (MCPEntry, bool) {
+	items := m.filteredMCP()
+	if len(items) == 0 {
+		return MCPEntry{}, false
+	}
+	return items[clampIndex(m.mcpIdx, len(items))], true
+}
+
+func (m Model) projectListItem(item ProjectEntry) listItem {
+	badges := []badge{}
+	for _, marker := range item.Markers {
+		tone := "muted"
+		switch marker {
+		case "git":
+			tone = "accent"
+		case "skills":
+			tone = "warning"
+		case "claude", "gemini", "codex", "opencode":
+			tone = "success"
+		}
+		badges = append(badges, badge{label: strings.ToUpper(marker), tone: tone})
+	}
+	if item.SessionCount > 0 {
+		badges = append(badges, badge{label: fmt.Sprintf("%d SES", item.SessionCount), tone: "muted"})
+	}
+	return listItem{
+		title:    item.Name,
+		subtitle: shortPath(item.Root),
+		badges:   badges,
+	}
+}
+
+func (m Model) sessionListItem(item sessionItem) listItem {
+	key := sessionKeyFor(item.Tool, item.Session.ID)
+	badges := []badge{{label: strings.ToUpper(string(item.Tool)), tone: "accent"}}
+	if _, ok := m.bundleBySession[key]; ok {
+		badges = append(badges, badge{label: "IMPORTED", tone: "success"})
+	}
+	if _, ok := m.doctorByKey[doctorKey(key, m.targetTool())]; ok {
+		badges = append(badges, badge{label: "DOCTOR", tone: "warning"})
+	}
+	if _, ok := m.exportByKey[doctorKey(key, m.targetTool())]; ok {
+		badges = append(badges, badge{label: "EXPORTED", tone: "muted"})
+	}
+	subtitle := shortPath(firstNonEmpty(item.Session.ProjectRoot, item.Session.StoragePath))
+	if subtitle == "" {
+		subtitle = firstNonEmpty(item.Session.UpdatedAt, "session metadata only")
+	}
+	return listItem{
+		title:    firstNonEmpty(item.Session.Title, item.Session.ID),
+		subtitle: subtitle,
+		badges:   badges,
+	}
+}
+
+func (m Model) skillListItem(item SkillEntry) listItem {
+	badges := []badge{{label: strings.ToUpper(sourceLabel(item.Source)), tone: "muted"}}
+	if install, ok := m.installByPath[item.Path]; ok {
+		tone := "success"
+		label := "INSTALLED"
+		if install.Overwrote {
+			tone = "warning"
+			label = "UPDATED"
+		}
+		badges = append(badges, badge{label: label, tone: tone})
+	}
+	return listItem{
+		title:    item.Name,
+		subtitle: firstNonEmpty(item.Description, shortPath(item.Path)),
+		badges:   badges,
+	}
+}
+
+func (m Model) mcpListItem(item MCPEntry) listItem {
+	tone := "muted"
+	switch item.Status {
+	case "parsed", "probed":
+		tone = "success"
+	case "configured", "degraded":
+		tone = "warning"
+	case "broken":
+		tone = "error"
+	}
+	badges := []badge{{label: strings.ToUpper(item.Status), tone: tone}}
+	if item.Tool != "" {
+		badges = append(badges, badge{label: strings.ToUpper(string(item.Tool)), tone: "accent"})
+	}
+	if len(item.ServerNames) > 0 {
+		badges = append(badges, badge{label: fmt.Sprintf("%d SRV", len(item.ServerNames)), tone: "muted"})
+	}
+	if probe, ok := m.probeByPath[item.Path]; ok {
+		label := "PROBED"
+		tone = "warning"
+		if probe.Reachable {
+			tone = "success"
+			label = "VALID"
+		}
+		badges = append(badges, badge{label: label, tone: tone})
+	}
+	return listItem{
+		title:    item.Name,
+		subtitle: firstNonEmpty(item.Details, shortPath(item.Path)),
+		badges:   badges,
+	}
+}
+
+func (m Model) activeSectionName() string {
+	switch m.activeSection {
+	case sectionSessions:
+		return "sessions"
+	case sectionProjects:
+		return "projects"
+	case sectionSkills:
+		return "skills"
+	case sectionMCP:
+		return "mcp"
+	default:
+		return "logs"
+	}
+}
+
+func (m Model) focusName() string {
+	switch m.focus {
+	case focusNav:
+		return "nav"
+	case focusList:
+		return "list"
+	default:
+		return "preview"
+	}
+}
+
+func (m Model) targetTool() domain.Tool {
+	if len(toolOrder) == 0 {
+		return domain.ToolClaude
+	}
+	if m.targetIdx < 0 || m.targetIdx >= len(toolOrder) {
+		return toolOrder[0]
+	}
+	return toolOrder[m.targetIdx]
+}
+
+func (m Model) currentPreviewTab() PreviewTab {
+	switch m.activeSection {
+	case sectionSessions:
+		return sessionPreviewTabs[wrapIndex(m.sessionTabIdx, len(sessionPreviewTabs))]
+	case sectionSkills:
+		return skillPreviewTabs[wrapIndex(m.skillTabIdx, len(skillPreviewTabs))]
+	case sectionMCP:
+		return mcpPreviewTabs[wrapIndex(m.mcpTabIdx, len(mcpPreviewTabs))]
+	default:
+		return previewSummary
+	}
+}
+
+func (m Model) previewTabLabel() string {
+	if m.activeSection == sectionLogs {
+		return ""
+	}
+	if m.activeSection == sectionProjects {
+		return ""
+	}
+	return string(m.currentPreviewTab())
+}
+
+func (m Model) currentSectionTabs() []PreviewTab {
+	switch m.activeSection {
+	case sectionSessions:
+		return sessionPreviewTabs
+	case sectionProjects:
+		return nil
+	case sectionSkills:
+		return skillPreviewTabs
+	case sectionMCP:
+		return mcpPreviewTabs
+	default:
+		return nil
+	}
+}
+
+func (m Model) currentLayout() workspaceLayout {
+	mode := m.layoutMode()
+	bodyY := 2
+	contentHeight := maxInt(12, m.height-7)
+	switch mode {
+	case layoutWide:
+		navWidth := 20
+		listWidth := maxInt(34, (m.width-navWidth)/3)
+		previewWidth := maxInt(36, m.width-navWidth-listWidth)
+		return workspaceLayout{
+			mode:    mode,
+			nav:     rect{X: 0, Y: bodyY, W: navWidth, H: contentHeight},
+			list:    rect{X: navWidth, Y: bodyY, W: listWidth, H: contentHeight},
+			preview: rect{X: navWidth + listWidth, Y: bodyY, W: previewWidth, H: contentHeight},
+		}
+	case layoutMedium:
+		navWidth := 20
+		rightWidth := maxInt(48, m.width-navWidth)
+		listHeight := maxInt(8, contentHeight/2)
+		previewHeight := maxInt(8, contentHeight-listHeight)
+		return workspaceLayout{
+			mode:    mode,
+			nav:     rect{X: 0, Y: bodyY, W: navWidth, H: contentHeight},
+			list:    rect{X: navWidth, Y: bodyY, W: rightWidth, H: listHeight},
+			preview: rect{X: navWidth, Y: bodyY + listHeight, W: rightWidth, H: previewHeight},
+		}
+	default:
+		navHeight := 4
+		listHeight := maxInt(8, contentHeight-2)
+		return workspaceLayout{
+			mode:    mode,
+			nav:     rect{X: 0, Y: bodyY, W: m.width, H: navHeight},
+			list:    rect{X: 0, Y: bodyY + navHeight, W: m.width, H: listHeight},
+			preview: rect{X: 0, Y: bodyY + navHeight, W: m.width, H: listHeight},
+		}
+	}
+}
+
+func (m Model) layoutMode() layoutMode {
+	switch {
+	case m.width >= 120:
+		return layoutWide
+	case m.width >= 90:
+		return layoutMedium
+	default:
+		return layoutNarrow
+	}
+}
+
+func (m Model) contextActions() string {
+	actions := []string{"[/] search", "[r] refresh", "[?] help", "[q] quit"}
+	switch m.activeSection {
+	case sectionSessions:
+		actions = append(actions, "[i] import", "[d] doctor", "[e] export", "[t] target")
+	case sectionSkills:
+		actions = append(actions, "[I] install")
+	case sectionMCP:
+		actions = append(actions, "[p] validate")
+	}
+	return strings.Join(actions, "  ")
+}
+
+func (m Model) spinnerFrame() string {
+	frames := []string{"-", "\\", "|", "/"}
+	return frames[m.spinnerIdx%len(frames)]
+}
+
+func (m *Model) hitNav(layout workspaceLayout, x int, y int) (workspaceSection, bool) {
+	if layout.mode == layoutNarrow {
+		if y != layout.nav.Y+2 {
+			return 0, false
+		}
+		_, hits := m.renderNavCompactHits()
+		relX := x - (layout.nav.X + 2)
+		for _, hit := range hits {
+			if relX >= hit.Start && relX < hit.End {
+				return hit.Section, true
+			}
+		}
+		return 0, false
+	}
+
+	row := y - (layout.nav.Y + 2)
+	if row < 3 {
+		return 0, false
+	}
+	index := row - 3
+	if index >= 0 && index < len(sectionOrder) {
+		return sectionOrder[index], true
+	}
+	return 0, false
+}
+
+func (m *Model) hitList(layout workspaceLayout, x int, y int) (int, bool) {
+	panel := layout.list
+	if layout.mode == layoutNarrow && m.focus == focusPreview {
+		panel = layout.preview
+	}
+	row := y - (panel.Y + 2)
+	if row < 0 {
+		return 0, false
+	}
+	switch m.activeSection {
+	case sectionSessions:
+		index := m.sessionListOffset + row/2
+		return index, index >= 0 && index < len(m.filteredSessions())
+	case sectionProjects:
+		index := m.projectListOffset + row/2
+		return index, index >= 0 && index < len(m.filteredProjects())
+	case sectionSkills:
+		index := m.skillListOffset + row/2
+		return index, index >= 0 && index < len(m.filteredSkills())
+	case sectionMCP:
+		index := m.mcpListOffset + row/2
+		return index, index >= 0 && index < len(m.filteredMCP())
+	default:
+		index := m.logListOffset + row
+		return index, index >= 0 && index < len(m.filteredLogs())
+	}
+}
+
+func (m *Model) hitPreviewTab(layout workspaceLayout, x int, y int) (PreviewTab, bool) {
+	if m.activeSection == sectionLogs || m.activeSection == sectionProjects {
+		return "", false
+	}
+	if y != layout.preview.Y+2 {
+		return "", false
+	}
+	_, hits := m.renderPreviewTabs()
+	relX := x - (layout.preview.X + 2)
+	for _, hit := range hits {
+		if relX >= hit.Start && relX < hit.End {
+			return hit.Tab, true
+		}
+	}
+	return "", false
+}
+
+func (m *Model) selectVisibleIndex(index int) {
+	switch m.activeSection {
+	case sectionSessions:
+		m.setSessionIndex(index)
+	case sectionProjects:
+		m.setProjectIndex(index)
+	case sectionSkills:
+		m.setSkillIndex(index)
+	case sectionMCP:
+		m.setMCPIndex(index)
+	case sectionLogs:
+		m.setLogIndex(index)
+	}
+	m.ensureVisibleSelection()
+}
+
+func (m *Model) setActiveSection(section workspaceSection) {
+	if m.activeSection == section {
+		return
+	}
+	m.activeSection = section
+	m.resetPreviewScroll()
+	m.ensureValidSelection()
+	m.ensureVisibleSelection()
+}
+
+func (m *Model) setSessionIndex(index int) {
+	if index == m.sessionIdx {
+		return
+	}
+	m.sessionIdx = clampIndex(index, len(m.filteredSessions()))
+	m.resetPreviewScroll()
+}
+
+func (m *Model) setProjectIndex(index int) {
+	if index == m.projectIdx {
+		return
+	}
+	m.projectIdx = clampIndex(index, len(m.filteredProjects()))
+	m.resetPreviewScroll()
+}
+
+func (m *Model) setSkillIndex(index int) {
+	if index == m.skillIdx {
+		return
+	}
+	m.skillIdx = clampIndex(index, len(m.filteredSkills()))
+	m.resetPreviewScroll()
+}
+
+func (m *Model) setMCPIndex(index int) {
+	if index == m.mcpIdx {
+		return
+	}
+	m.mcpIdx = clampIndex(index, len(m.filteredMCP()))
+	m.resetPreviewScroll()
+}
+
+func (m *Model) setLogIndex(index int) {
+	if index == m.logIdx {
+		return
+	}
+	m.logIdx = clampIndex(index, len(m.filteredLogs()))
+	m.resetPreviewScroll()
+}
+
+func (m *Model) setPreviewTab(tab PreviewTab) {
+	tabs := m.currentSectionTabs()
+	for i, candidate := range tabs {
+		if candidate != tab {
+			continue
+		}
+		switch m.activeSection {
+		case sectionSessions:
+			m.sessionTabIdx = i
+		case sectionSkills:
+			m.skillTabIdx = i
+		case sectionMCP:
+			m.mcpTabIdx = i
+		}
+		m.resetPreviewScroll()
+		return
+	}
+}
+
+func (m *Model) resetPreviewScroll() {
+	switch m.activeSection {
+	case sectionSessions:
+		m.sessionPreviewOffset = 0
+	case sectionProjects:
+		m.projectPreviewOffset = 0
+	case sectionSkills:
+		m.skillPreviewOffset = 0
+	case sectionMCP:
+		m.mcpPreviewOffset = 0
+	case sectionLogs:
+		m.logPreviewOffset = 0
+	}
+}
+
+func (m Model) currentPreviewOffset() int {
+	switch m.activeSection {
+	case sectionSessions:
+		return m.sessionPreviewOffset
+	case sectionProjects:
+		return m.projectPreviewOffset
+	case sectionSkills:
+		return m.skillPreviewOffset
+	case sectionMCP:
+		return m.mcpPreviewOffset
+	default:
+		return m.logPreviewOffset
+	}
+}
+
+func (m *Model) setPreviewOffset(offset int) {
+	switch m.activeSection {
+	case sectionSessions:
+		m.sessionPreviewOffset = offset
+	case sectionProjects:
+		m.projectPreviewOffset = offset
+	case sectionSkills:
+		m.skillPreviewOffset = offset
+	case sectionMCP:
+		m.mcpPreviewOffset = offset
+	default:
+		m.logPreviewOffset = offset
+	}
+}
+
+func (m Model) previewLines(height int, content string) ([]string, int) {
+	lines := strings.Split(content, "\n")
+	if height <= 0 {
+		return nil, 0
+	}
+	offset := m.currentPreviewOffset()
+	maxOffset := maxInt(0, len(lines)-height)
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	end := minInt(len(lines), offset+height)
+	return lines[offset:end], offset
+}
+
+func (m Model) renderNavCompactHits() (string, []navHit) {
+	segments := make([]string, 0, len(sectionOrder))
+	hits := make([]navHit, 0, len(sectionOrder))
+	x := 0
+	for _, section := range sectionOrder {
+		label := m.navLabel(section)
+		tone := "muted"
+		if section == m.activeSection {
+			tone = "accent"
+		}
+		rendered := badgeStyle(label, tone)
+		segments = append(segments, rendered)
+		width := lipgloss.Width(rendered)
+		hits = append(hits, navHit{Section: section, Start: x, End: x + width})
+		x += width
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Left, segments...), hits
+}
+
+func (m Model) listWindow(total int, itemHeight int, availableLines int, selected int, offset int) (int, int) {
+	if total == 0 {
+		return 0, 0
+	}
+	visible := maxInt(1, availableLines/itemHeight)
+	offset = ensureWindowOffset(offset, total, itemHeight, availableLines, selected)
+	if offset+visible > total {
+		visible = total - offset
+	}
+	return offset, visible
+}
+
+func ensureWindowOffset(offset int, total int, itemHeight int, availableLines int, selected int) int {
+	if total == 0 {
+		return 0
+	}
+	visible := maxInt(1, availableLines/itemHeight)
+	maxOffset := maxInt(0, total-visible)
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if selected < offset {
+		offset = selected
+	}
+	if selected >= offset+visible {
+		offset = selected - visible + 1
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	return offset
+}
+
+func panelBodyHeight(panel rect) int {
+	return maxInt(1, panel.H-3)
+}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg { return tickMsg{} })
+}
+
+func sourceLabel(source string) string {
+	parts := strings.Split(source, string(os.PathSeparator))
+	if len(parts) == 0 || source == "" {
+		return "project"
+	}
+	if strings.Contains(source, "skills") || strings.Contains(source, ".codex") || strings.Contains(source, ".claude") || strings.Contains(source, "opencode") {
+		return "user"
+	}
+	return parts[0]
+}
+
+func badgeStyle(label string, tone string) string {
+	style := lipgloss.NewStyle().
+		Padding(0, 1).
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("239"))
+	switch tone {
+	case "accent":
+		style = style.Background(lipgloss.Color("45")).Foreground(lipgloss.Color("235"))
+	case "success":
+		style = style.Background(lipgloss.Color("35")).Foreground(lipgloss.Color("235"))
+	case "warning":
+		style = style.Background(lipgloss.Color("214")).Foreground(lipgloss.Color("235"))
+	case "error":
+		style = style.Background(lipgloss.Color("160")).Foreground(lipgloss.Color("255"))
+	}
+	return style.Render(label)
+}
+
+func renderBadges(values []badge) string {
+	if len(values) == 0 {
+		return ""
+	}
+	rendered := make([]string, 0, len(values))
+	for _, value := range values {
+		rendered = append(rendered, badgeStyle(value.label, value.tone))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Left, rendered...)
+}
+
+func exportOutputDir(root string, sessionID string, target domain.Tool) string {
+	if root == "" {
+		root = filepath.Join(os.TempDir(), defaultExportRoot)
+	}
+	name := sanitizeSegment(sessionID)
+	if name == "" {
+		name = "latest"
+	}
+	return filepath.Join(root, fmt.Sprintf("%s-to-%s", name, target))
+}
+
+func sanitizeSegment(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + ('a' - 'A'))
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func sessionKeyFor(tool domain.Tool, sessionID string) string {
+	return string(tool) + ":" + sessionID
+}
+
+func doctorKey(sessionKey string, target domain.Tool) string {
+	return sessionKey + "->" + string(target)
+}
+
+func mustJSON(value any) string {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("json error: %v", err)
+	}
+	return string(data)
+}
+
+func matchesQuery(query string, parts ...string) bool {
+	query = strings.TrimSpace(strings.ToLower(query))
+	if query == "" {
+		return true
+	}
+	for _, part := range parts {
+		if strings.Contains(strings.ToLower(part), query) {
 			return true
 		}
 	}
 	return false
 }
 
-func (m Model) firstAvailableTool() string {
-	order := []string{"codex", "gemini", "claude", "opencode"}
-	for _, tool := range order {
-		if m.toolAvailable(tool) {
-			return tool
-		}
+func fitLines(text string, height int) string {
+	if height <= 0 {
+		return ""
 	}
-	return "codex"
-}
-
-func (m Model) moveSelection(delta int) Model {
-	report := m.currentInspect()
-	if len(report.Sessions) == 0 {
-		return m
+	lines := strings.Split(text, "\n")
+	if len(lines) <= height {
+		return strings.Join(lines, "\n")
 	}
-	m.sessionIdx = clampIndex(m.sessionIdx+delta, len(report.Sessions))
-	return m
-}
-
-func (m Model) prevTool() (Model, tea.Cmd) {
-	order := []string{"codex", "gemini", "claude", "opencode"}
-	if len(order) == 0 {
-		return m, nil
+	if height == 1 {
+		return lines[0]
 	}
-	idx := indexOf(order, m.activeTool)
-	if idx < 0 {
-		idx = 0
-	}
-	m.activeTool = order[(idx+len(order)-1)%len(order)]
-	m.sessionIdx = 0
-	return m, m.inspectToolCmd(m.activeTool)
-}
-
-func (m Model) nextTool() (Model, tea.Cmd) {
-	order := []string{"codex", "gemini", "claude", "opencode"}
-	idx := indexOf(order, m.activeTool)
-	if idx < 0 {
-		idx = 0
-	}
-	m.activeTool = order[(idx+1)%len(order)]
-	m.sessionIdx = 0
-	return m, m.inspectToolCmd(m.activeTool)
-}
-
-func (m Model) activeViewName() string {
-	switch m.activeView {
-	case viewProjects:
-		return "projects"
-	case viewSessions:
-		return "sessions"
-	case viewMCP:
-		return "mcp"
-	case viewSkills:
-		return "skills"
-	default:
-		return "logs"
-	}
-}
-
-func (m Model) targetTool() string {
-	order := []string{"codex", "gemini", "claude", "opencode"}
-	if len(order) == 0 {
-		return "claude"
-	}
-	if m.targetIdx < 0 || m.targetIdx >= len(order) {
-		return order[0]
-	}
-	return order[m.targetIdx]
-}
-
-func (m Model) isActivePane(title string) bool {
-	switch title {
-	case "Project":
-		return m.activeView == viewProjects
-	case "Sessions":
-		return m.activeView == viewSessions
-	case "MCP":
-		return m.activeView == viewMCP
-	case "Skills":
-		return m.activeView == viewSkills
-	case "Logs":
-		return m.activeView == viewLogs
-	default:
-		return false
-	}
+	out := append([]string{}, lines[:height-1]...)
+	out = append(out, "... more ...")
+	return strings.Join(out, "\n")
 }
 
 func clampIndex(idx int, size int) int {
@@ -598,13 +2272,14 @@ func clampIndex(idx int, size int) int {
 	return idx
 }
 
-func indexOf(values []string, target string) int {
-	for i, value := range values {
-		if value == target {
-			return i
-		}
+func wrapIndex(idx int, size int) int {
+	if size <= 0 {
+		return 0
 	}
-	return -1
+	if idx < 0 {
+		return (idx%size + size) % size
+	}
+	return idx % size
 }
 
 func shortPath(path string) string {
@@ -618,39 +2293,56 @@ func shortPath(path string) string {
 	return path
 }
 
-func maxInt(a, b int) int {
+func maxInt(a int, b int) int {
 	if a > b {
 		return a
 	}
 	return b
 }
 
-func BuildMCPProfiles() []MCPEntry {
-	profiles := []MCPEntry{}
-	for _, tool := range []domain.Tool{domain.ToolCodex, domain.ToolGemini, domain.ToolClaude, domain.ToolOpenCode} {
-		profile, err := capability.ProfileFor(tool, domain.AssetKindSession)
-		if err != nil {
-			continue
-		}
-		profiles = append(profiles, MCPEntry{
-			Name:    string(tool),
-			Status:  "profile",
-			Details: strings.Join(profile.GeneratedArtifacts, ", "),
-		})
+func minInt(a int, b int) int {
+	if a < b {
+		return a
 	}
-	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
-	return profiles
+	return b
 }
 
-func DefaultScanMCP() []MCPEntry {
-	return BuildMCPProfiles()
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
-func DefaultExportDir() string {
-	return filepath.Join(os.TempDir(), "sessionport-export")
+func boolLabel(ok bool, truthy string, falsy string) string {
+	if ok {
+		return truthy
+	}
+	return falsy
 }
 
-func RenderBundleJSON(bundle domain.SessionBundle) string {
-	data, _ := json.MarshalIndent(bundle, "", "  ")
-	return string(data)
+func indexOfSection(values []workspaceSection, target workspaceSection) int {
+	for i, value := range values {
+		if value == target {
+			return i
+		}
+	}
+	return -1
+}
+
+func (m Model) sectionCount(section workspaceSection) int {
+	switch section {
+	case sectionSessions:
+		return len(m.filteredSessions())
+	case sectionProjects:
+		return len(m.filteredProjects())
+	case sectionSkills:
+		return len(m.filteredSkills())
+	case sectionMCP:
+		return len(m.filteredMCP())
+	default:
+		return len(m.filteredLogs())
+	}
 }

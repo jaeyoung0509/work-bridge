@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"sessionport/internal/domain"
-	"sessionport/internal/importer"
-	"sessionport/internal/packagex"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/importer"
+	"github.com/jaeyoung0509/work-bridge/internal/packagex"
 )
 
 func (a *App) runPack(cmd *cobra.Command, _ []string) error {
