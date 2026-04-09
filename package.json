@@ -1,13 +1,30 @@
 {
   "name": "work-bridge",
-  "version": "0.0.0",
-  "description": "Install the work-bridge CLI from GitHub Releases.",
+  "version": "0.1.0",
+  "description": "Portable session migration CLI for Claude Code, Gemini CLI, OpenCode, and Codex CLI.",
+  "homepage": "https://github.com/jaeyoung0509/work-bridge",
   "repository": {
     "type": "git",
     "url": "https://github.com/jaeyoung0509/work-bridge.git"
   },
+  "bugs": {
+    "url": "https://github.com/jaeyoung0509/work-bridge/issues"
+  },
+  "keywords": [
+    "claude",
+    "gemini",
+    "codex",
+    "opencode",
+    "mcp",
+    "session",
+    "migration",
+    "ai",
+    "coding-agent",
+    "tui"
+  ],
+  "license": "MIT",
   "bin": {
-    "work-bridge": "./bin/work-bridge.js"
+    "work-bridge": "bin/work-bridge.js"
   },
   "scripts": {
     "postinstall": "node scripts/install.cjs"

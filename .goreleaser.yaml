@@ -1,19 +1,19 @@
 version: 2
 
-project_name: sessionport
+project_name: work-bridge
 
 before:
   hooks:
     - go test ./...
 
 builds:
-  - id: sessionport
-    main: ./cmd/sessionport
-    binary: sessionport
+  - id: work-bridge
+    main: ./cmd/work-bridge
+    binary: work-bridge
     env:
       - CGO_ENABLED=0
     ldflags:
-      - -s -w -X sessionport/internal/cli.Version={{.Version}}
+      - -s -w -X github.com/jaeyoung0509/work-bridge/internal/cli.Version={{.Version}}
     goos:
       - linux
       - darwin
@@ -23,9 +23,9 @@ builds:
       - arm64
 
 archives:
-  - id: sessionport
+  - id: work-bridge
     builds:
-      - sessionport
+      - work-bridge
     format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
