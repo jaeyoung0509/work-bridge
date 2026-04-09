@@ -1,9 +1,11 @@
 # work-bridge
 
-> **Switching between Claude Code, Gemini CLI, OpenCode, and Codex due to LLM cost?**  
-> Bring your session context, MCP configs, and skills with you — instantly.
+> **Switching between Claude Code, Gemini CLI, OpenCode, and Codex on the same project because of LLM cost?**  
+> Keep your project-scoped session context visible, export restart artifacts for the next tool, sync skills where supported, and validate MCP before you switch.
 
-`work-bridge` is a local-first portability layer for AI coding-agent workflows. It inspects your current sessions, skills, and MCP server configs across all major tools, then exports a portable bundle that any other tool can pick up from where you left off.
+`work-bridge` is a local-first portability layer for AI coding-agent workflows. It helps you inspect project-scoped sessions, compare skills across scopes, validate MCP server configs, and export starter artifacts for the next tool. It does not write directly into another tool's native session database.
+
+> **Stability:** `work-bridge` is still early and not fully stable yet. Some migration paths, especially importer-heavy flows in the TUI, are still under active crash triage. If the TUI is unreliable for your case, prefer the CLI subcommands and inspect/import/doctor/export flows directly.
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -28,12 +30,14 @@ Modern AI coding agents store their state in incompatible formats:
 
 ## Supported Tools
 
-| Tool | Import | Export | MCP | Skills |
-|------|:------:|:------:|:---:|:------:|
-| **Claude Code** | ✅ | ✅ | ✅ | ✅ |
-| **Gemini CLI** | ✅ | ✅ | ✅ | ✅ |
-| **OpenCode** | ✅ | ✅ | ✅ | ✅ |
-| **Codex CLI** | ✅ | ✅ | ✅ | ✅ |
+| Tool | Session import | Export artifacts | MCP inspect/probe | Skill sync target |
+|------|:--------------:|:----------------:|:-----------------:|:-----------------:|
+| **Claude Code** | ✅ | ✅ | ✅ | ✅ user scope |
+| **Gemini CLI** | ✅ | ✅ | ✅ | Not yet |
+| **OpenCode** | ✅ | ✅ | ✅ | ✅ user + global scope |
+| **Codex CLI** | ✅ | ✅ | ✅ | ✅ user scope |
+
+Project-local `skills/` and `.github/skills/` content is still discovered across tools. The table above only describes named per-tool sync targets exposed by the current TUI.
 
 ---
 
@@ -80,35 +84,97 @@ The TUI provides five panels:
 
 **Mouse support:** pane focus · list selection · preview tab switching · scroll
 
+### What It Does Today
+
+- `Projects` sets the active scope for `Sessions`, `Skills`, and `MCP`
+- `Sessions` lets you import, doctor-check, and export starter artifacts for another tool
+- `Skills` lets you compare project/user/global scopes and copy skills where a target path exists
+- `MCP` lets you inspect merged scope and run runtime probes for stdio, HTTP, and SSE servers
+
+Current non-goals:
+
+- No native session-store injection into another tool
+- No automatic MCP config rewrite or apply step
+- No Gemini-specific skill sync target yet
+
 ### Migration Workflow
 
 ```
-You were using Claude Code → now switching to Gemini CLI
+You were using Gemini CLI → now switching to Claude Code
 ```
 
 ```bash
-# 1. Inspect what Claude Code has
-work-bridge inspect claude --limit 5
+# 1. Inspect what Gemini has
+work-bridge inspect gemini --limit 5
 
-# 2. Import the latest session into a portable bundle
-work-bridge import --from claude --session latest --out ./bundle.json
+# 2. Import the latest Gemini session into a portable bundle
+work-bridge import --from gemini --session latest --out ./bundle.json
 
-# 3. Check compatibility with the target tool
-work-bridge doctor --from claude --session latest --target gemini
+# 3. Check compatibility with Claude Code
+work-bridge doctor --from gemini --session latest --target claude
 
-# 4. Export target-native artifacts
-work-bridge export --bundle ./bundle.json --target gemini --out ./out/
+# 4. Export Claude starter artifacts
+work-bridge export --bundle ./bundle.json --target claude --out ./out/
 
-# 5. Start Gemini CLI — it'll pick up GEMINI.work-bridge.md automatically
-cd ./out && gemini
+# 5. Review the exported files and merge the supplement into your project's CLAUDE.md
+ls ./out/
 ```
 
 The exported `./out/` directory contains:
 
-- `GEMINI.work-bridge.md` — context supplement injected into Gemini CLI
-- `SETTINGS_PATCH.json` — portable settings to apply
+- `CLAUDE.work-bridge.md` — project supplement to merge into `CLAUDE.md`
+- `MEMORY_NOTE.md` — summary and portability warnings
 - `STARTER_PROMPT.md` — copy-paste prompt to resume your task
 - `manifest.json` — export manifest with portability warnings
+
+For Gemini CLI exports, `work-bridge` writes `GEMINI.work-bridge.md` as a starter artifact. Gemini CLI's default context filename is `GEMINI.md`, so you still need to merge or rename the file, or configure Gemini's `context.fileName` explicitly.
+
+### Claude E2E Shell Script
+
+Run a real `gemini -> claude` migration check against a local project without launching the TUI:
+
+```bash
+./scripts/e2e_gemini_to_claude.sh /path/to/repo
+```
+
+Useful overrides:
+
+```bash
+SESSION_ID=<gemini-session-id> OUT_DIR=/tmp/work-bridge-out ./scripts/e2e_gemini_to_claude.sh /path/to/repo
+```
+
+The script will:
+
+1. Run `work-bridge --format json inspect gemini`
+2. Pick the latest Gemini session whose `project_root` matches the selected repo
+3. Run `import`, `doctor --target claude`, and `export`
+4. Print project markers, known skill directories, and MCP config locations
+5. Save `inspect`, `detect`, `bundle`, and `doctor` JSON into a debug directory for follow-up
+
+This is the fastest way to debug real-user migration failures because it bypasses the TUI completely. If the latest Gemini session does not belong to the selected project, the script fails instead of silently using some other repo's session.
+
+### Debugging TUI Crashes
+
+If the TUI exits immediately or appears to "just close", capture the full terminal transcript with `script`:
+
+```bash
+script -q /tmp/work-bridge-tui.log zsh -lc 'work-bridge'
+```
+
+This keeps the alternate-screen escape sequences and any panic trace in one file. It is the easiest way to confirm whether the failure happened in the TUI renderer or inside an importer/exporter command.
+
+To isolate the failing stage without the TUI, run the underlying commands directly:
+
+```bash
+work-bridge inspect gemini --limit 10
+work-bridge import --from gemini --session <id> --out /tmp/bundle.json
+work-bridge doctor --from gemini --session <id> --target claude
+work-bridge export --bundle /tmp/bundle.json --target claude --out /tmp/out
+```
+
+Known limitation:
+
+- Some importer paths are still under crash triage. If the TUI path is unstable, prefer the shell script or the direct CLI sequence above until the crash is fixed.
 
 ### Pack / Unpack (Portable Archives)
 
@@ -192,6 +258,8 @@ The **MCP** panel (and `inspect` output) runs a real runtime handshake for suppo
 4. Counts advertised `resources`, `resourceTemplates`, `tools`, and `prompts`
 
 This catches config problems that a static lint pass would miss.
+
+`work-bridge` does not apply MCP configs to another tool yet. The current MCP flow is inspect, merge, and probe.
 
 ---
 
