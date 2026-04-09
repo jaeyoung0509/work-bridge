@@ -11,9 +11,9 @@ import (
 
 func (a *App) runInspect(cmd *cobra.Command, args []string) error {
 	switch args[0] {
-	case "codex", "gemini", "claude":
+	case "codex", "gemini", "claude", "opencode":
 	default:
-		return newExitError(ExitUsage, fmt.Sprintf("unsupported tool %q (expected codex, gemini, or claude)", args[0]))
+		return newExitError(ExitUsage, fmt.Sprintf("unsupported tool %q (expected codex, gemini, claude, or opencode)", args[0]))
 	}
 
 	cwd, homeDir, err := a.resolveWorkingDirs()

@@ -21,7 +21,6 @@ func (a *App) newInspectCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "inspect <tool>",
 		Short:  "Inspect a tool's importable sessions and assets.",
-		Hidden: true,
 		Args:   cobra.ExactArgs(1),
 		RunE:   a.runInspect,
 	}
@@ -59,15 +58,20 @@ func (a *App) newDoctorCommand() *cobra.Command {
 
 func (a *App) newExportCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:    "export",
-		Short:  "Generate target-native starter artifacts from a bundle.",
-		Hidden: true,
-		Args:   cobra.NoArgs,
-		RunE:   a.runExport,
+		Use:   "export",
+		Short: "Export a target-ready handoff without applying to the project.",
+		Args:  cobra.NoArgs,
+		RunE:  a.runExport,
 	}
-	cmd.Flags().String("bundle", "", "Path to a canonical bundle JSON file.")
-	cmd.Flags().String("target", "", "Target tool: codex, gemini, claude, opencode.")
-	cmd.Flags().String("out", "", "Output directory for generated artifacts.")
+	cmd.Flags().String("from", "", "Source tool: codex, gemini, claude, opencode.")
+	cmd.Flags().String("session", "latest", "Source session identifier or latest.")
+	cmd.Flags().String("to", "", "Target tool: codex, gemini, claude, opencode.")
+	cmd.Flags().String("project", "", "Project root to scope the export.")
+	cmd.Flags().String("out", "", "Output directory for exported target-ready files.")
+	cmd.Flags().Bool("dry-run", false, "Preview export output without writing files.")
+	cmd.Flags().Bool("no-skills", false, "Skip skills when building the export payload.")
+	cmd.Flags().Bool("no-mcp", false, "Skip MCP when building the export payload.")
+	cmd.Flags().Bool("session-only", false, "Export session context only.")
 	return cmd
 }
 
@@ -103,7 +107,6 @@ func (a *App) newVersionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:    "version",
 		Short:  "Print the build version.",
-		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_, err := fmt.Fprintf(cmd.OutOrStdout(), "work-bridge %s\n", Version)

@@ -170,8 +170,8 @@ func (a *App) initConfig(cmd *cobra.Command) error {
 func (a *App) newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "work-bridge",
-		Short:         "Portable working-state CLI for coding-agent sessions.",
-		Long:          "TUI-first workspace for coding-agent portability across Claude Code, Gemini CLI, OpenCode, and Codex CLI.",
+		Short:         "Project-scoped handoff CLI for coding-agent sessions.",
+		Long:          "Inspect sessions, switch a project into Claude Code, Gemini CLI, OpenCode, or Codex with direct project-native apply, or export the same target-ready handoff to a separate directory.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       Version,
@@ -195,13 +195,9 @@ func (a *App) newRootCommand() *cobra.Command {
 	_ = a.viper.BindPFlag("workspace_roots", root.PersistentFlags().Lookup("workspace-roots"))
 
 	root.AddCommand(
-		a.newDetectCommand(),
 		a.newInspectCommand(),
-		a.newImportCommand(),
-		a.newDoctorCommand(),
+		a.newSwitchCommand(),
 		a.newExportCommand(),
-		a.newPackCommand(),
-		a.newUnpackCommand(),
 		a.newVersionCommand(),
 	)
 	return root
