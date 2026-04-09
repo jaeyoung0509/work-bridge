@@ -156,7 +156,8 @@ func TestWorkspaceActionsCoverSessionSkillAndMCPFlows(t *testing.T) {
 		m = updated.(Model)
 	}
 
-	if probe, ok := m.probeByPath["/configs/claude/settings.json"]; !ok || !probe.Reachable {
+	probeKey := mcpEntryKey(MCPEntry{Name: "claude settings", Path: "/configs/claude/settings.json", Tool: domain.ToolClaude})
+	if probe, ok := m.probeByID[probeKey]; !ok || !probe.Reachable {
 		t.Fatalf("expected successful mcp probe, got %#v", probe)
 	}
 }
@@ -403,6 +404,83 @@ func TestMouseClickOnActiveProjectClearsScope(t *testing.T) {
 	}
 	if got := len(m.filteredSessions()); got != 2 {
 		t.Fatalf("expected all sessions after clear, got %d", got)
+	}
+}
+
+func TestActiveProjectRecomputesEffectiveMCPDeclaration(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(context.Background(), Backend{})
+	m.snapshot = WorkspaceSnapshot{
+		Projects: []ProjectEntry{
+			{Name: "repo", Root: "/workspace/repo", WorkspaceRoot: "/workspace"},
+			{Name: "other", Root: "/workspace/other", WorkspaceRoot: "/workspace"},
+		},
+		MCPProfiles: []MCPEntry{
+			{
+				ID:   "claude|server|github",
+				Kind: "server",
+				Name: "github",
+				Tool: domain.ToolClaude,
+				Declarations: []MCPDeclaration{
+					{
+						Label:       "global claude settings",
+						Path:        "/home/me/.claude/settings.json",
+						Source:      "user",
+						Scope:       "user",
+						Status:      "parsed",
+						RawConfig:   `{"mcpServers":{"github":{"command":"mcp-github-user"}}}`,
+						BinaryFound: true,
+						BinaryPath:  "/opt/bin/claude",
+						Server: MCPServerConfig{
+							Name:      "github",
+							Transport: "stdio",
+							Command:   "mcp-github-user",
+						},
+					},
+					{
+						Label:       "project claude settings",
+						Path:        "/workspace/other/.claude/settings.json",
+						Source:      "project",
+						Scope:       "project",
+						Status:      "parsed",
+						RawConfig:   `{"mcpServers":{"github":{"command":"mcp-github-other"}}}`,
+						BinaryFound: true,
+						BinaryPath:  "/opt/bin/claude",
+						Server: MCPServerConfig{
+							Name:      "github",
+							Transport: "stdio",
+							Command:   "mcp-github-other",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	m.activeProjectRoot = "/workspace/repo"
+	items := m.filteredMCP()
+	if len(items) != 1 {
+		t.Fatalf("expected github entry to remain visible via user scope, got %d", len(items))
+	}
+	if items[0].Scope != "user" || items[0].Path != "/home/me/.claude/settings.json" {
+		t.Fatalf("expected user declaration to be effective for repo project, got %#v", items[0])
+	}
+
+	m.activeProjectRoot = "/workspace/other"
+	items = m.filteredMCP()
+	if len(items) != 1 {
+		t.Fatalf("expected github entry for other project, got %d", len(items))
+	}
+	if items[0].Scope != "project" || items[0].Path != "/workspace/other/.claude/settings.json" {
+		t.Fatalf("expected project declaration to win for other project, got %#v", items[0])
+	}
+
+	raw := m.renderMCPPreview()
+	for _, want := range []string{"Effective scope: project", "Hidden / Overridden", "global claude settings"} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("expected MCP preview to contain %q, got %q", want, raw)
+		}
 	}
 }
 

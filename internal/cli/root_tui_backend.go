@@ -7,8 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,6 +50,17 @@ type mcpServerCandidate struct {
 	Servers map[string]any
 	Score   int
 	Source  string
+}
+
+type mcpConfigProfile struct {
+	Name        string
+	Path        string
+	Source      string
+	Tool        domain.Tool
+	RawConfig   string
+	BinaryFound bool
+	BinaryPath  string
+	Summary     mcpConfigSummary
 }
 
 type mcpEnvelope struct {
@@ -164,44 +177,8 @@ func (a *App) loadWorkspaceSnapshot(ctx context.Context) (tui.WorkspaceSnapshot,
 		if err != nil {
 			return err
 		}
-		enriched := make([]tui.MCPEntry, 0, len(entries))
-		for _, entry := range entries {
-			profile := tui.MCPEntry{
-				Name:   entry.Name,
-				Path:   entry.Path,
-				Source: entry.Source,
-				Status: "configured",
-				Tool:   inferMCPTool(entry.Name, entry.Path),
-			}
-			if data, readErr := a.fs.ReadFile(entry.Path); readErr == nil {
-				profile.RawConfig = string(data)
-				summary := summarizeMCPConfig(entry.Path, data)
-				profile.Format = summary.Format
-				profile.Status = summary.Status
-				profile.ParseWarnings = summary.Warnings
-				profile.ServerNames = append([]string{}, summary.ServerNames...)
-				profile.Servers = append([]tui.MCPServerConfig{}, summary.Servers...)
-				profile.DeclaredServers = len(summary.ServerNames)
-				profile.ParseSource = summary.ParseSource
-				if len(summary.ServerNames) > 0 {
-					profile.Details = fmt.Sprintf("%d MCP server(s)", len(summary.ServerNames))
-				} else {
-					profile.Details = "config present"
-				}
-			} else {
-				profile.Status = "broken"
-				profile.ParseWarnings = []string{fmt.Sprintf("read failed: %v", readErr)}
-				profile.Details = "config unreadable"
-			}
-			if profile.Tool != "" {
-				binary := toolBinary(profile.Tool)
-				if path, lookErr := a.look(binary); lookErr == nil && path != "" {
-					profile.BinaryFound = true
-					profile.BinaryPath = path
-				}
-			}
-			enriched = append(enriched, profile)
-		}
+		profiles := a.loadMCPProfiles(entries)
+		enriched := buildLogicalMCPEntries(profiles)
 		mu.Lock()
 		snapshot.MCPProfiles = enriched
 		mu.Unlock()
@@ -220,6 +197,207 @@ func (a *App) loadWorkspaceSnapshot(ctx context.Context) (tui.WorkspaceSnapshot,
 	snapshot.Projects = enrichProjectEntries(projectEntries, snapshot)
 	snapshot.HealthSummary = summarizeWorkspaceHealth(snapshot)
 	return snapshot, nil
+}
+
+func (a *App) loadMCPProfiles(entries []catalog.MCPEntry) []mcpConfigProfile {
+	profiles := make([]mcpConfigProfile, 0, len(entries))
+	for _, entry := range entries {
+		profile := mcpConfigProfile{
+			Name:   entry.Name,
+			Path:   entry.Path,
+			Source: entry.Source,
+			Tool:   inferMCPTool(entry.Name, entry.Path),
+			Summary: mcpConfigSummary{
+				Status: "configured",
+			},
+		}
+		if data, readErr := a.fs.ReadFile(entry.Path); readErr == nil {
+			profile.RawConfig = string(data)
+			profile.Summary = summarizeMCPConfig(entry.Path, data)
+		} else {
+			profile.Summary.Status = "broken"
+			profile.Summary.Warnings = []string{fmt.Sprintf("read failed: %v", readErr)}
+		}
+		if profile.Tool != "" {
+			binary := toolBinary(profile.Tool)
+			if path, lookErr := a.look(binary); lookErr == nil && path != "" {
+				profile.BinaryFound = true
+				profile.BinaryPath = path
+			}
+		}
+		profiles = append(profiles, profile)
+	}
+	return profiles
+}
+
+func buildLogicalMCPEntries(profiles []mcpConfigProfile) []tui.MCPEntry {
+	grouped := map[string]*tui.MCPEntry{}
+	entries := make([]tui.MCPEntry, 0, len(profiles))
+
+	for _, profile := range profiles {
+		if len(profile.Summary.Servers) == 0 {
+			entry := tui.MCPEntry{
+				ID:   mcpConfigEntryID(profile.Tool, profile.Path),
+				Kind: "config",
+				Name: firstNonEmpty(profile.Name, filepath.Base(profile.Path)),
+				Tool: profile.Tool,
+				Declarations: []tui.MCPDeclaration{
+					mcpDeclarationFromProfile(profile, tui.MCPServerConfig{}),
+				},
+			}
+			materializeLogicalMCPEntry(&entry)
+			entries = append(entries, entry)
+			continue
+		}
+
+		for _, server := range profile.Summary.Servers {
+			key := mcpServerEntryID(profile.Tool, server.Name)
+			entry, ok := grouped[key]
+			if !ok {
+				entry = &tui.MCPEntry{
+					ID:   key,
+					Kind: "server",
+					Name: server.Name,
+					Tool: profile.Tool,
+				}
+				grouped[key] = entry
+			}
+			entry.Declarations = append(entry.Declarations, mcpDeclarationFromProfile(profile, server))
+		}
+	}
+
+	keys := make([]string, 0, len(grouped))
+	for key := range grouped {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		entry := *grouped[key]
+		materializeLogicalMCPEntry(&entry)
+		entries = append(entries, entry)
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Tool == entries[j].Tool {
+			if entries[i].Kind == entries[j].Kind {
+				if entries[i].Name == entries[j].Name {
+					return entries[i].Path < entries[j].Path
+				}
+				return entries[i].Name < entries[j].Name
+			}
+			return entries[i].Kind < entries[j].Kind
+		}
+		return entries[i].Tool < entries[j].Tool
+	})
+	return entries
+}
+
+func mcpDeclarationFromProfile(profile mcpConfigProfile, server tui.MCPServerConfig) tui.MCPDeclaration {
+	details := "config present"
+	if server.Name != "" {
+		details = fmt.Sprintf("%s via %s", firstNonEmpty(server.Transport, "stdio"), filepath.Base(profile.Path))
+	} else if profile.Summary.Status == "broken" {
+		details = "config unreadable"
+	}
+	return tui.MCPDeclaration{
+		Label:         profile.Name,
+		Path:          profile.Path,
+		Source:        profile.Source,
+		Scope:         profile.Source,
+		Status:        profile.Summary.Status,
+		Details:       details,
+		Format:        profile.Summary.Format,
+		ParseSource:   profile.Summary.ParseSource,
+		RawConfig:     profile.RawConfig,
+		ParseWarnings: append([]string{}, profile.Summary.Warnings...),
+		BinaryFound:   profile.BinaryFound,
+		BinaryPath:    profile.BinaryPath,
+		Server:        server,
+	}
+}
+
+func materializeLogicalMCPEntry(entry *tui.MCPEntry) {
+	if entry == nil || len(entry.Declarations) == 0 {
+		return
+	}
+	sort.SliceStable(entry.Declarations, func(i, j int) bool {
+		if mcpScopeRank(entry.Declarations[i].Scope) == mcpScopeRank(entry.Declarations[j].Scope) {
+			return entry.Declarations[i].Path < entry.Declarations[j].Path
+		}
+		return mcpScopeRank(entry.Declarations[i].Scope) < mcpScopeRank(entry.Declarations[j].Scope)
+	})
+
+	effective := entry.Declarations[0]
+	entry.Path = effective.Path
+	entry.Source = effective.Source
+	entry.Scope = effective.Scope
+	entry.Status = firstNonEmpty(effective.Status, entry.Status)
+	entry.Details = firstNonEmpty(effective.Details, entry.Details)
+	entry.Format = firstNonEmpty(effective.Format, entry.Format)
+	entry.ParseSource = firstNonEmpty(effective.ParseSource, entry.ParseSource)
+	entry.RawConfig = firstNonEmpty(effective.RawConfig, entry.RawConfig)
+	entry.ParseWarnings = dedupeStrings(collectMCPDeclarationWarnings(entry.Declarations))
+	entry.BinaryFound = effective.BinaryFound
+	entry.BinaryPath = effective.BinaryPath
+	entry.Transport = firstNonEmpty(effective.Server.Transport, entry.Transport)
+	entry.DeclaredServers = len(entry.Declarations)
+	if entry.Kind == "server" && effective.Server.Name != "" {
+		entry.Servers = []tui.MCPServerConfig{effective.Server}
+		entry.ServerNames = []string{effective.Server.Name}
+	} else {
+		entry.Servers = nil
+		entry.ServerNames = nil
+	}
+	entry.HiddenScopes = hiddenMCPScopes(entry.Declarations)
+}
+
+func hiddenMCPScopes(declarations []tui.MCPDeclaration) []string {
+	if len(declarations) <= 1 {
+		return nil
+	}
+	hidden := make([]string, 0, len(declarations)-1)
+	for i, decl := range declarations {
+		if i == 0 {
+			continue
+		}
+		hidden = append(hidden, fmt.Sprintf("%s %s", firstNonEmpty(decl.Scope, decl.Source), decl.Path))
+	}
+	return dedupeStrings(hidden)
+}
+
+func collectMCPDeclarationWarnings(declarations []tui.MCPDeclaration) []string {
+	warnings := []string{}
+	for _, decl := range declarations {
+		for _, warning := range decl.ParseWarnings {
+			warnings = append(warnings, strings.TrimSpace(firstNonEmpty(decl.Scope, decl.Source)+": "+warning))
+		}
+	}
+	return warnings
+}
+
+func mcpServerEntryID(tool domain.Tool, name string) string {
+	return fmt.Sprintf("%s|server|%s", firstNonEmpty(string(tool), "shared"), strings.TrimSpace(name))
+}
+
+func mcpConfigEntryID(tool domain.Tool, path string) string {
+	return fmt.Sprintf("%s|config|%s", firstNonEmpty(string(tool), "shared"), filepath.Clean(path))
+}
+
+func mcpScopeRank(scope string) int {
+	switch strings.TrimSpace(strings.ToLower(scope)) {
+	case "local":
+		return 0
+	case "project":
+		return 1
+	case "user":
+		return 2
+	case "global":
+		return 3
+	case "legacy":
+		return 4
+	default:
+		return 5
+	}
 }
 
 func (a *App) resolveWorkspaceRoots(cwd string, homeDir string, projectRoot string) []string {
@@ -299,9 +477,11 @@ func enrichProjectEntries(entries []catalog.ProjectEntry, snapshot tui.Workspace
 			projects[idx].SkillCount++
 		}
 	}
-	for _, mcp := range snapshot.MCPProfiles {
-		if idx := projectIndexForPath(projects, mcp.Path); idx >= 0 {
-			projects[idx].MCPCount++
+	for i := range projects {
+		for _, mcp := range snapshot.MCPProfiles {
+			if mcpRelevantToProject(mcp, projects[i].Root) {
+				projects[i].MCPCount++
+			}
 		}
 	}
 
@@ -331,6 +511,31 @@ func projectIndexForPath(projects []tui.ProjectEntry, path string) int {
 		}
 	}
 	return bestIdx
+}
+
+func mcpRelevantToProject(entry tui.MCPEntry, projectRoot string) bool {
+	if strings.TrimSpace(projectRoot) == "" {
+		return true
+	}
+	declarations := entry.Declarations
+	if len(declarations) == 0 {
+		declarations = []tui.MCPDeclaration{{
+			Path:   entry.Path,
+			Source: entry.Source,
+			Scope:  entry.Scope,
+		}}
+	}
+	for _, decl := range declarations {
+		switch decl.Scope {
+		case "project", "local":
+			if idx := projectIndexForPath([]tui.ProjectEntry{{Root: projectRoot}}, decl.Path); idx >= 0 {
+				return true
+			}
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func summarizeWorkspaceHealth(snapshot tui.WorkspaceSnapshot) tui.WorkspaceHealthSummary {
@@ -706,6 +911,7 @@ func (a *App) probeMCPFromTUI(ctx context.Context, entry tui.MCPEntry) (tui.MCPP
 	}
 
 	runtimeAttempted := 0
+	runtimeModes := map[string]struct{}{}
 	connected := 0
 	aggregateWarnings := append([]string{}, result.Warnings...)
 	serverResults := make([]tui.MCPServerProbeResult, 0, len(entry.Servers))
@@ -719,9 +925,8 @@ func (a *App) probeMCPFromTUI(ctx context.Context, entry tui.MCPEntry) (tui.MCPP
 		serverResult := a.probeMCPServer(serverCtx, entry.Path, server)
 		cancel()
 		serverResults = append(serverResults, serverResult)
-		if serverResult.Transport == "" || serverResult.Transport == "stdio" {
-			runtimeAttempted++
-		}
+		runtimeAttempted++
+		runtimeModes[firstNonEmpty(serverResult.Transport, "stdio")] = struct{}{}
 		if serverResult.Reachable {
 			connected++
 			result.ResourceCount += serverResult.ResourceCount
@@ -741,10 +946,14 @@ func (a *App) probeMCPFromTUI(ctx context.Context, entry tui.MCPEntry) (tui.MCPP
 	result.ConnectedServers = connected
 	result.Warnings = dedupeStrings(aggregateWarnings)
 	switch {
-	case runtimeAttempted > 0:
-		result.Mode = "runtime-stdio"
-	default:
+	case runtimeAttempted == 0:
 		result.Mode = "config-only"
+	case len(runtimeModes) == 1:
+		for mode := range runtimeModes {
+			result.Mode = "runtime-" + mode
+		}
+	default:
+		result.Mode = "runtime-mixed"
 	}
 	result.Reachable = connected == len(entry.Servers) && len(entry.ParseWarnings) == 0
 	result.Latency = time.Since(started).Round(time.Millisecond).String()
@@ -767,9 +976,20 @@ func (a *App) probeMCPServer(ctx context.Context, configPath string, server tui.
 		} else {
 			result = probed
 		}
-	case "http", "streamable-http", "sse":
-		result.Error = fmt.Sprintf("unsupported %s transport", server.Transport)
-		result.Warnings = append(result.Warnings, "runtime probing currently supports stdio MCP servers only")
+	case "http", "streamable-http":
+		probed, err := a.probeMCPHTTPServer(ctx, server)
+		if err != nil {
+			result.Error = err.Error()
+		} else {
+			result = probed
+		}
+	case "sse":
+		probed, err := a.probeMCPSSEServer(ctx, server)
+		if err != nil {
+			result.Error = err.Error()
+		} else {
+			result = probed
+		}
 	default:
 		result.Error = fmt.Sprintf("unsupported %s transport", firstNonEmpty(server.Transport, "unknown"))
 	}
@@ -781,7 +1001,6 @@ func (a *App) probeMCPServer(ctx context.Context, configPath string, server tui.
 }
 
 func (a *App) probeMCPStdioServer(ctx context.Context, configPath string, server tui.MCPServerConfig) (tui.MCPServerProbeResult, error) {
-	started := time.Now()
 	result := tui.MCPServerProbeResult{
 		Name:      server.Name,
 		Transport: "stdio",
@@ -842,13 +1061,82 @@ func (a *App) probeMCPStdioServer(ctx context.Context, configPath string, server
 		reader: bufio.NewReader(stdout),
 		writer: stdin,
 	}
-
-	requestID := 1
-	initializeResult, err := session.initialize(ctx, requestID)
+	probed, err := probeMCPRuntimeSession(ctx, session, result)
 	if err != nil {
 		if stderrBuf.Len() > 0 {
 			return result, fmt.Errorf("%w; stderr: %s", err, strings.TrimSpace(stderrBuf.String()))
 		}
+		return result, err
+	}
+	return probed, nil
+}
+
+func (a *App) probeMCPHTTPServer(ctx context.Context, server tui.MCPServerConfig) (tui.MCPServerProbeResult, error) {
+	result := tui.MCPServerProbeResult{
+		Name:      server.Name,
+		Transport: firstNonEmpty(server.Transport, "http"),
+		Command:   server.URL,
+	}
+	if strings.TrimSpace(server.URL) == "" {
+		return result, fmt.Errorf("missing %s url", result.Transport)
+	}
+	session := &mcpHTTPClientSession{
+		client: &http.Client{},
+		url:    server.URL,
+	}
+	return probeMCPRuntimeSession(ctx, session, result)
+}
+
+func (a *App) probeMCPSSEServer(ctx context.Context, server tui.MCPServerConfig) (tui.MCPServerProbeResult, error) {
+	result := tui.MCPServerProbeResult{
+		Name:      server.Name,
+		Transport: "sse",
+		Command:   server.URL,
+	}
+	if strings.TrimSpace(server.URL) == "" {
+		return result, fmt.Errorf("missing sse url")
+	}
+	session, err := newMCPSSEClientSession(ctx, &http.Client{}, server.URL)
+	if err != nil {
+		return result, err
+	}
+	return probeMCPRuntimeSession(ctx, session, result)
+}
+
+func hasCapability(capabilities map[string]any, key string) bool {
+	if len(capabilities) == 0 {
+		return false
+	}
+	value, ok := capabilities[key]
+	if !ok {
+		return false
+	}
+	if boolean, ok := value.(bool); ok {
+		return boolean
+	}
+	return value != nil
+}
+
+type mcpRuntimeSession interface {
+	initialize(context.Context, int) (mcpInitializeResult, error)
+	notify(string, any) error
+	listCount(context.Context, *int, string, string) (int, error)
+	close() error
+}
+
+func probeMCPRuntimeSession(ctx context.Context, session mcpRuntimeSession, base tui.MCPServerProbeResult) (tui.MCPServerProbeResult, error) {
+	started := time.Now()
+	result := base
+	defer func() {
+		_ = session.close()
+		if result.Latency == "" {
+			result.Latency = time.Since(started).Round(time.Millisecond).String()
+		}
+	}()
+
+	requestID := 1
+	initializeResult, err := session.initialize(ctx, requestID)
+	if err != nil {
 		return result, err
 	}
 	requestID++
@@ -900,20 +1188,6 @@ func (a *App) probeMCPStdioServer(ctx context.Context, configPath string, server
 	return result, nil
 }
 
-func hasCapability(capabilities map[string]any, key string) bool {
-	if len(capabilities) == 0 {
-		return false
-	}
-	value, ok := capabilities[key]
-	if !ok {
-		return false
-	}
-	if boolean, ok := value.(bool); ok {
-		return boolean
-	}
-	return value != nil
-}
-
 type mcpClientSession struct {
 	reader *bufio.Reader
 	writer io.Writer
@@ -949,6 +1223,10 @@ func (s mcpClientSession) notify(method string, params any) error {
 		"method":  method,
 		"params":  params,
 	})
+}
+
+func (s mcpClientSession) close() error {
+	return nil
 }
 
 func (s mcpClientSession) listCount(ctx context.Context, requestID *int, method string, field string) (int, error) {
@@ -1057,6 +1335,467 @@ func (s mcpClientSession) respondToServerRequest(message mcpEnvelope) error {
 			},
 		})
 	}
+}
+
+type mcpHTTPClientSession struct {
+	client *http.Client
+	url    string
+}
+
+func (s *mcpHTTPClientSession) initialize(ctx context.Context, id int) (mcpInitializeResult, error) {
+	response, err := s.call(ctx, id, "initialize", map[string]any{
+		"protocolVersion": "2024-11-05",
+		"capabilities": map[string]any{
+			"resources": map[string]any{},
+			"tools":     map[string]any{},
+			"prompts":   map[string]any{},
+		},
+		"clientInfo": map[string]any{
+			"name":    "work-bridge",
+			"version": Version,
+		},
+	})
+	if err != nil {
+		return mcpInitializeResult{}, err
+	}
+
+	var result mcpInitializeResult
+	if err := json.Unmarshal(response.Result, &result); err != nil {
+		return mcpInitializeResult{}, fmt.Errorf("decode initialize result: %w", err)
+	}
+	return result, nil
+}
+
+func (s *mcpHTTPClientSession) notify(method string, params any) error {
+	_, err := s.postJSON(context.Background(), map[string]any{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  params,
+	})
+	return err
+}
+
+func (s *mcpHTTPClientSession) listCount(ctx context.Context, requestID *int, method string, field string) (int, error) {
+	total := 0
+	cursor := ""
+	for {
+		params := map[string]any{}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+		response, err := s.call(ctx, *requestID, method, params)
+		*requestID += 1
+		if err != nil {
+			if callErr, ok := err.(*mcpCallError); ok && callErr.Code == -32601 {
+				return 0, nil
+			}
+			return total, err
+		}
+
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(response.Result, &payload); err != nil {
+			return total, fmt.Errorf("decode %s result: %w", method, err)
+		}
+
+		var items []json.RawMessage
+		if raw, ok := payload[field]; ok && len(raw) > 0 {
+			if err := json.Unmarshal(raw, &items); err != nil {
+				return total, fmt.Errorf("decode %s items: %w", method, err)
+			}
+			total += len(items)
+		}
+
+		var next string
+		if raw, ok := payload["nextCursor"]; ok && len(raw) > 0 {
+			if err := json.Unmarshal(raw, &next); err != nil {
+				return total, fmt.Errorf("decode %s nextCursor: %w", method, err)
+			}
+		}
+		if next == "" {
+			return total, nil
+		}
+		cursor = next
+	}
+}
+
+func (s *mcpHTTPClientSession) close() error {
+	return nil
+}
+
+func (s *mcpHTTPClientSession) call(ctx context.Context, id int, method string, params any) (mcpEnvelope, error) {
+	envelopes, err := s.postJSON(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+		"params":  params,
+	})
+	if err != nil {
+		return mcpEnvelope{}, err
+	}
+	for _, message := range envelopes {
+		if len(message.Method) > 0 {
+			continue
+		}
+		if !mcpIDMatches(message.ID, id) {
+			continue
+		}
+		if message.Error != nil {
+			return mcpEnvelope{}, &mcpCallError{Code: message.Error.Code, Message: message.Error.Message}
+		}
+		return message, nil
+	}
+	return mcpEnvelope{}, errors.New("missing JSON-RPC response from MCP server")
+}
+
+func (s *mcpHTTPClientSession) postJSON(ctx context.Context, payload any) ([]mcpEnvelope, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return decodeMCPHTTPResponse(resp)
+}
+
+type mcpSSEClientSession struct {
+	client     *http.Client
+	streamResp *http.Response
+	endpoint   string
+	messages   chan mcpEnvelope
+	errs       chan error
+}
+
+func newMCPSSEClientSession(ctx context.Context, client *http.Client, streamURL string) (*mcpSSEClientSession, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("sse %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+
+	session := &mcpSSEClientSession{
+		client:     client,
+		streamResp: resp,
+		messages:   make(chan mcpEnvelope, 16),
+		errs:       make(chan error, 1),
+	}
+
+	endpointCh := make(chan string, 1)
+	go session.readLoop(endpointCh)
+
+	select {
+	case endpoint := <-endpointCh:
+		if endpoint == "" {
+			_ = session.close()
+			return nil, errors.New("sse endpoint event missing")
+		}
+		session.endpoint = endpoint
+		return session, nil
+	case err := <-session.errs:
+		_ = session.close()
+		return nil, err
+	case <-ctx.Done():
+		_ = session.close()
+		return nil, ctx.Err()
+	}
+}
+
+func (s *mcpSSEClientSession) initialize(ctx context.Context, id int) (mcpInitializeResult, error) {
+	response, err := s.call(ctx, id, "initialize", map[string]any{
+		"protocolVersion": "2024-11-05",
+		"capabilities": map[string]any{
+			"resources": map[string]any{},
+			"tools":     map[string]any{},
+			"prompts":   map[string]any{},
+		},
+		"clientInfo": map[string]any{
+			"name":    "work-bridge",
+			"version": Version,
+		},
+	})
+	if err != nil {
+		return mcpInitializeResult{}, err
+	}
+
+	var result mcpInitializeResult
+	if err := json.Unmarshal(response.Result, &result); err != nil {
+		return mcpInitializeResult{}, fmt.Errorf("decode initialize result: %w", err)
+	}
+	return result, nil
+}
+
+func (s *mcpSSEClientSession) notify(method string, params any) error {
+	_, err := s.postPayload(context.Background(), map[string]any{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  params,
+	})
+	return err
+}
+
+func (s *mcpSSEClientSession) listCount(ctx context.Context, requestID *int, method string, field string) (int, error) {
+	total := 0
+	cursor := ""
+	for {
+		params := map[string]any{}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+		response, err := s.call(ctx, *requestID, method, params)
+		*requestID += 1
+		if err != nil {
+			if callErr, ok := err.(*mcpCallError); ok && callErr.Code == -32601 {
+				return 0, nil
+			}
+			return total, err
+		}
+
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(response.Result, &payload); err != nil {
+			return total, fmt.Errorf("decode %s result: %w", method, err)
+		}
+
+		var items []json.RawMessage
+		if raw, ok := payload[field]; ok && len(raw) > 0 {
+			if err := json.Unmarshal(raw, &items); err != nil {
+				return total, fmt.Errorf("decode %s items: %w", method, err)
+			}
+			total += len(items)
+		}
+
+		var next string
+		if raw, ok := payload["nextCursor"]; ok && len(raw) > 0 {
+			if err := json.Unmarshal(raw, &next); err != nil {
+				return total, fmt.Errorf("decode %s nextCursor: %w", method, err)
+			}
+		}
+		if next == "" {
+			return total, nil
+		}
+		cursor = next
+	}
+}
+
+func (s *mcpSSEClientSession) close() error {
+	if s.streamResp != nil && s.streamResp.Body != nil {
+		return s.streamResp.Body.Close()
+	}
+	return nil
+}
+
+func (s *mcpSSEClientSession) call(ctx context.Context, id int, method string, params any) (mcpEnvelope, error) {
+	if _, err := s.postPayload(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+		"params":  params,
+	}); err != nil {
+		return mcpEnvelope{}, err
+	}
+
+	for {
+		select {
+		case message := <-s.messages:
+			if len(message.Method) > 0 {
+				if len(message.ID) > 0 {
+					if err := s.respondToServerRequest(ctx, message); err != nil {
+						return mcpEnvelope{}, err
+					}
+				}
+				continue
+			}
+			if !mcpIDMatches(message.ID, id) {
+				continue
+			}
+			if message.Error != nil {
+				return mcpEnvelope{}, &mcpCallError{Code: message.Error.Code, Message: message.Error.Message}
+			}
+			return message, nil
+		case err := <-s.errs:
+			return mcpEnvelope{}, err
+		case <-ctx.Done():
+			return mcpEnvelope{}, ctx.Err()
+		}
+	}
+}
+
+func (s *mcpSSEClientSession) postPayload(ctx context.Context, payload any) ([]mcpEnvelope, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("sse post %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	if resp.ContentLength == 0 {
+		return nil, nil
+	}
+	return decodeMCPHTTPResponse(resp)
+}
+
+func (s *mcpSSEClientSession) respondToServerRequest(ctx context.Context, message mcpEnvelope) error {
+	if len(message.ID) == 0 {
+		return nil
+	}
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      json.RawMessage(message.ID),
+	}
+	switch message.Method {
+	case "ping":
+		payload["result"] = map[string]any{}
+	default:
+		payload["error"] = map[string]any{
+			"code":    -32601,
+			"message": "method not supported by work-bridge probe",
+		}
+	}
+	_, err := s.postPayload(ctx, payload)
+	return err
+}
+
+func (s *mcpSSEClientSession) readLoop(endpointCh chan<- string) {
+	reader := bufio.NewReader(s.streamResp.Body)
+	endpointSent := false
+	for {
+		eventName, data, err := readSSEEvent(reader)
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				select {
+				case s.errs <- err:
+				default:
+				}
+			}
+			if !endpointSent {
+				select {
+				case endpointCh <- "":
+				default:
+				}
+			}
+			return
+		}
+		switch eventName {
+		case "endpoint":
+			if !endpointSent {
+				endpointSent = true
+				endpointCh <- strings.TrimSpace(data)
+			}
+		default:
+			var message mcpEnvelope
+			if err := json.Unmarshal([]byte(data), &message); err != nil {
+				select {
+				case s.errs <- fmt.Errorf("decode sse message: %w", err):
+				default:
+				}
+				return
+			}
+			s.messages <- message
+		}
+	}
+}
+
+func readSSEEvent(reader *bufio.Reader) (string, string, error) {
+	eventName := ""
+	dataLines := []string{}
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return "", "", err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			if len(dataLines) == 0 && eventName == "" {
+				continue
+			}
+			return eventName, strings.Join(dataLines, "\n"), nil
+		}
+		if strings.HasPrefix(line, "event:") {
+			eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+}
+
+func decodeMCPHTTPResponse(resp *http.Response) ([]mcpEnvelope, error) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" {
+		return nil, nil
+	}
+	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") || strings.HasPrefix(trimmed, "event:") || strings.HasPrefix(trimmed, "data:") {
+		return decodeMCPEventStream(body)
+	}
+	var message mcpEnvelope
+	if err := json.Unmarshal(body, &message); err != nil {
+		return nil, fmt.Errorf("decode mcp http response: %w", err)
+	}
+	return []mcpEnvelope{message}, nil
+}
+
+func decodeMCPEventStream(body []byte) ([]mcpEnvelope, error) {
+	reader := bufio.NewReader(bytes.NewReader(body))
+	envelopes := []mcpEnvelope{}
+	for {
+		eventName, data, err := readSSEEvent(reader)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, err
+		}
+		if eventName == "endpoint" || strings.TrimSpace(data) == "" {
+			continue
+		}
+		var message mcpEnvelope
+		if err := json.Unmarshal([]byte(data), &message); err != nil {
+			return nil, fmt.Errorf("decode sse envelope: %w", err)
+		}
+		envelopes = append(envelopes, message)
+	}
+	return envelopes, nil
 }
 
 func writeMCPMessage(w io.Writer, payload any) error {
