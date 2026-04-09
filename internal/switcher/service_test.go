@@ -218,8 +218,8 @@ func TestExportWritesTargetReadyTreeOutsideProject(t *testing.T) {
 	if result.Report == nil {
 		t.Fatalf("expected export report")
 	}
-	if result.Report.AppliedMode != "export_only" {
-		t.Fatalf("expected export_only report, got %q", result.Report.AppliedMode)
+	if result.Report.AppliedMode != "project" {
+		t.Fatalf("expected project report, got %q", result.Report.AppliedMode)
 	}
 	for _, path := range []string{
 		filepath.Join(outRoot, ".work-bridge", "claude", "CLAUDE.work-bridge.md"),

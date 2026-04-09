@@ -22,6 +22,7 @@ func (a *App) newSwitchCommand() *cobra.Command {
 	cmd.Flags().String("session", "latest", "Source session identifier or latest.")
 	cmd.Flags().String("to", "", "Target tool: codex, gemini, claude, opencode.")
 	cmd.Flags().String("project", "", "Project root to scope the handoff.")
+	cmd.Flags().String("mode", string(domain.SwitchModeProject), "Apply mode: project, native.")
 	cmd.Flags().Bool("dry-run", false, "Preview managed apply without writing files.")
 	cmd.Flags().Bool("no-skills", false, "Skip skills when building the switch payload.")
 	cmd.Flags().Bool("no-mcp", false, "Skip MCP when building the switch payload.")
@@ -39,6 +40,10 @@ func (a *App) runSwitch(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	projectRoot, err := cmd.Flags().GetString("project")
+	if err != nil {
+		return err
+	}
+	modeValue, err := cmd.Flags().GetString("mode")
 	if err != nil {
 		return err
 	}
@@ -74,6 +79,10 @@ func (a *App) runSwitch(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return newExitError(ExitUsage, err.Error())
 	}
+	mode, err := parseModeValue(modeValue)
+	if err != nil {
+		return newExitError(ExitUsage, err.Error())
+	}
 
 	cwd, homeDir, err := a.resolveWorkingDirs()
 	if err != nil {
@@ -93,6 +102,7 @@ func (a *App) runSwitch(cmd *cobra.Command, _ []string) error {
 		Session:       sessionID,
 		To:            toTool,
 		ProjectRoot:   projectRoot,
+		Mode:          mode,
 		IncludeSkills: !noSkills,
 		IncludeMCP:    !noMCP,
 		DryRun:        dryRun,
@@ -134,9 +144,13 @@ func renderSwitchText(result switcher.Result, mode string) string {
 	fmt.Fprintf(&b, "work-bridge %s\n", mode)
 	fmt.Fprintf(&b, "source: %s/%s\n", result.Payload.Bundle.SourceTool, result.Payload.Bundle.SourceSessionID)
 	fmt.Fprintf(&b, "target: %s\n", result.Plan.TargetTool)
+	fmt.Fprintf(&b, "mode: %s\n", result.Plan.Mode)
 	fmt.Fprintf(&b, "project: %s\n", result.Plan.ProjectRoot)
 	fmt.Fprintf(&b, "status: %s\n", result.Plan.Status)
-	fmt.Fprintf(&b, "managed root: %s\n", result.Plan.ManagedRoot)
+	fmt.Fprintf(&b, "destination: %s\n", result.Plan.DestinationRoot)
+	if result.Plan.ManagedRoot != "" {
+		fmt.Fprintf(&b, "managed root: %s\n", result.Plan.ManagedRoot)
+	}
 	fmt.Fprintf(&b, "\ncomponents\n")
 	fmt.Fprintf(&b, "- session: %s (%s)\n", result.Plan.Session.State, result.Plan.Session.Summary)
 	fmt.Fprintf(&b, "- skills: %s (%s)\n", result.Plan.Skills.State, result.Plan.Skills.Summary)
@@ -149,6 +163,7 @@ func renderSwitchText(result switcher.Result, mode string) string {
 		fmt.Fprintf(&b, "\napply report\n")
 		fmt.Fprintf(&b, "- mode: %s\n", result.Report.AppliedMode)
 		fmt.Fprintf(&b, "- status: %s\n", result.Report.Status)
+		fmt.Fprintf(&b, "- destination: %s\n", result.Report.DestinationRoot)
 		for _, file := range result.Report.FilesUpdated {
 			fmt.Fprintf(&b, "- updated: %s\n", file)
 		}
@@ -176,6 +191,14 @@ func parseToolValue(value string) (domain.Tool, error) {
 		return "", fmt.Errorf("unsupported tool %q (expected codex, gemini, claude, or opencode)", value)
 	}
 	return tool, nil
+}
+
+func parseModeValue(value string) (domain.SwitchMode, error) {
+	mode := domain.SwitchMode(strings.TrimSpace(strings.ToLower(value)))
+	if !mode.IsKnown() {
+		return "", fmt.Errorf("unsupported mode %q (expected project or native)", value)
+	}
+	return mode, nil
 }
 
 func dedupeText(values []string) []string {

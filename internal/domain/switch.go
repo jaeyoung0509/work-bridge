@@ -9,6 +9,22 @@ const (
 	SwitchStateError   SwitchState = "ERROR"
 )
 
+type SwitchMode string
+
+const (
+	SwitchModeProject SwitchMode = "project"
+	SwitchModeNative  SwitchMode = "native"
+)
+
+func (m SwitchMode) IsKnown() bool {
+	switch m {
+	case SwitchModeProject, SwitchModeNative:
+		return true
+	default:
+		return false
+	}
+}
+
 type SwitchPayload struct {
 	Bundle   SessionBundle   `json:"bundle"`
 	Skills   []SkillPayload  `json:"skills"`
@@ -54,8 +70,10 @@ type MCPServerConfig struct {
 }
 
 type SwitchPlan struct {
+	Mode          SwitchMode            `json:"mode"`
 	TargetTool    Tool                  `json:"target_tool"`
 	ProjectRoot   string                `json:"project_root"`
+	DestinationRoot string              `json:"destination_root"`
 	ManagedRoot   string                `json:"managed_root"`
 	Status        SwitchState           `json:"status"`
 	Compatibility CompatibilityReport   `json:"compatibility"`
@@ -85,6 +103,7 @@ type ApplyReport struct {
 	TargetTool      Tool                   `json:"target_tool"`
 	AppliedMode     string                 `json:"applied_mode"`
 	ProjectRoot     string                 `json:"project_root"`
+	DestinationRoot string                 `json:"destination_root"`
 	ManagedRoot     string                 `json:"managed_root"`
 	DryRun          bool                   `json:"dry_run,omitempty"`
 	Status          SwitchState            `json:"status"`
@@ -106,8 +125,9 @@ type ApplyComponentResult struct {
 
 type TargetAdapter interface {
 	Target() Tool
-	Preview(payload SwitchPayload, projectRoot string) (SwitchPlan, error)
+	Preview(payload SwitchPayload, projectRoot string, mode SwitchMode, destinationOverride string) (SwitchPlan, error)
 	ApplyProject(payload SwitchPayload, plan SwitchPlan) (ApplyReport, error)
 	ApplyNativeProject(payload SwitchPayload, plan SwitchPlan) (ApplyReport, error)
 	ExportProject(payload SwitchPayload, plan SwitchPlan) (ApplyReport, error)
+	ExportNative(payload SwitchPayload, plan SwitchPlan) (ApplyReport, error)
 }

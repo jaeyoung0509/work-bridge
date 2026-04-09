@@ -23,6 +23,10 @@ func (a *App) runExport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	modeValue, err := cmd.Flags().GetString("mode")
+	if err != nil {
+		return err
+	}
 	outDir, err := cmd.Flags().GetString("out")
 	if err != nil {
 		return err
@@ -65,6 +69,10 @@ func (a *App) runExport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return newExitError(ExitUsage, err.Error())
 	}
+	mode, err := parseModeValue(modeValue)
+	if err != nil {
+		return newExitError(ExitUsage, err.Error())
+	}
 
 	cwd, homeDir, err := a.resolveWorkingDirs()
 	if err != nil {
@@ -84,6 +92,7 @@ func (a *App) runExport(cmd *cobra.Command, _ []string) error {
 		Session:       sessionID,
 		To:            toTool,
 		ProjectRoot:   projectRoot,
+		Mode:          mode,
 		IncludeSkills: !noSkills,
 		IncludeMCP:    !noMCP,
 		DryRun:        dryRun,

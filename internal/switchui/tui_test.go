@@ -3,7 +3,6 @@ package switchui
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -41,7 +40,7 @@ func TestModelPreviewAndExportFlow(t *testing.T) {
 			MCP:         domain.SwitchComponentPlan{State: domain.SwitchStatePartial},
 		},
 		Report: &domain.ApplyReport{
-			AppliedMode:  "export_only",
+			AppliedMode:  "project",
 			Status:       domain.SwitchStatePartial,
 			FilesUpdated: []string{"/workspace/demo/.work-bridge/exports/claude/CLAUDE.md"},
 		},
@@ -91,7 +90,8 @@ func TestModelPreviewAndExportFlow(t *testing.T) {
 		t.Fatalf("expected export result to be stored")
 	}
 	view := model.View().Content
-	if !strings.Contains(view, "mode: export_only") {
+	expectedView := "work-bridge\nproject: /workspace/demo\nscope: current-project | target: codex | mode: project\n\nSessions\n> [GEMINI] Gemini session\n    /workspace/demo\n\n\nPreview\n  status: READY\n  session: READY\n  skills: READY\n  mcp: PARTIAL\n  managed root: /workspace/demo/.work-bridge/exports/claude/.work-bridge/claude\n  files:\n\n\nResult\n  mode: project\n  status: PARTIAL\n    - updated /workspace/demo/.work-bridge/exports/claude/CLAUDE.md\n\n\nkeys: enter preview | a apply | e export | m mode | r refresh | ? help | q quit\n"
+	if view != expectedView {
 		t.Fatalf("expected export mode in view, got %q", view)
 	}
 }

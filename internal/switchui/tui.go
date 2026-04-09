@@ -27,6 +27,7 @@ type Model struct {
 
 	sessionIdx int
 	targetIdx  int
+	mode       domain.SwitchMode
 	busy       string
 	err        string
 	help       bool
@@ -74,6 +75,7 @@ func NewModel(ctx context.Context, backend Backend) Model {
 		ctx:       ctx,
 		backend:   backend,
 		targetIdx: 0,
+		mode:      domain.SwitchModeProject,
 		activity:  []string{"boot requested"},
 	}
 }
@@ -142,7 +144,7 @@ func (m Model) View() tea.View {
 	var b strings.Builder
 	fmt.Fprintln(&b, "work-bridge")
 	fmt.Fprintf(&b, "project: %s\n", fallback(m.workspace.ProjectRoot, "n/a"))
-	fmt.Fprintf(&b, "scope: current-project | target: %s", m.targetTool())
+	fmt.Fprintf(&b, "scope: current-project | target: %s | mode: %s", m.targetTool(), m.mode)
 	if m.busy != "" {
 		fmt.Fprintf(&b, " | %s", m.busy)
 	}
@@ -162,9 +164,9 @@ func (m Model) View() tea.View {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b)
 	if m.help {
-		fmt.Fprintln(&b, "keys: ↑/↓ or j/k move | ←/→ or h/l target | enter preview | a apply | e export | r refresh | ? help | q quit")
+		fmt.Fprintln(&b, "keys: ↑/↓ or j/k move | ←/→ or h/l target | m mode | enter preview | a apply | e export | r refresh | ? help | q quit")
 	} else {
-		fmt.Fprintln(&b, "keys: enter preview | a apply | e export | r refresh | ? help | q quit")
+		fmt.Fprintln(&b, "keys: enter preview | a apply | e export | m mode | r refresh | ? help | q quit")
 	}
 	return tea.NewView(b.String())
 }
@@ -175,6 +177,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.help = !m.help
+		return m, nil
+	case "m":
+		if m.mode == domain.SwitchModeProject {
+			m.mode = domain.SwitchModeNative
+		} else {
+			m.mode = domain.SwitchModeProject
+		}
+		m.preview = nil
+		m.result = nil
 		return m, nil
 	case "r":
 		m.busy = "refreshing workspace"
@@ -274,6 +285,7 @@ func (m Model) currentRequest() switcher.Request {
 		From:          session.Tool,
 		Session:       session.ID,
 		To:            m.targetTool(),
+		Mode:          m.mode,
 		ProjectRoot:   m.workspace.ProjectRoot,
 		IncludeSkills: true,
 		IncludeMCP:    true,

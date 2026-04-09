@@ -180,7 +180,7 @@ func (a *App) newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "work-bridge",
 		Short:         "Project-scoped handoff CLI for coding-agent sessions.",
-		Long:          "Inspect sessions, switch a project into Claude Code, Gemini CLI, OpenCode, or Codex with direct project-native apply, or export the same target-ready handoff to a separate directory.",
+		Long:          "Inspect sessions, switch a project into Claude Code, Gemini CLI, OpenCode, or Codex using explicit project or native mode, or export the same handoff into project-managed or native-store output.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       Version,

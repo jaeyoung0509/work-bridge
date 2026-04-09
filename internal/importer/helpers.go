@@ -45,3 +45,47 @@ func stringField(raw map[string]any, keys ...string) string {
 	}
 	return ""
 }
+
+func stripJSONCComments(data []byte) []byte {
+	lines := strings.Split(string(data), "\n")
+	if len(lines) == 0 {
+		return data
+	}
+	var b strings.Builder
+	inBlock := false
+	for _, line := range lines {
+		text := line
+		if inBlock {
+			if end := strings.Index(text, "*/"); end >= 0 {
+				inBlock = false
+				text = text[end+2:]
+			} else {
+				continue
+			}
+		}
+		for {
+			start := strings.Index(text, "/*")
+			if start < 0 {
+				break
+			}
+			end := strings.Index(text[start+2:], "*/")
+			if end < 0 {
+				text = text[:start]
+				inBlock = true
+				break
+			}
+			text = text[:start] + text[start+2+end+2:]
+		}
+		if idx := strings.Index(text, "//"); idx >= 0 {
+			text = text[:idx]
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		text = strings.TrimRight(text, ",")
+		b.WriteString(text)
+		b.WriteByte('\n')
+	}
+	return []byte(b.String())
+}

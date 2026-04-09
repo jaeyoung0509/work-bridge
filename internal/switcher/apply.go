@@ -23,16 +23,27 @@ const (
 )
 
 type projectAdapter struct {
-	target domain.Tool
-	fs     fsx.FS
-	now    func() time.Time
+	target    domain.Tool
+	fs        fsx.FS
+	now       func() time.Time
+	homeDir   string
+	toolPaths domain.ToolPaths
+	lookPath  func(string) (string, error)
+	runCmd    commandRunner
 }
 
 func (a *projectAdapter) Target() domain.Tool {
 	return a.target
 }
 
-func (a *projectAdapter) Preview(payload domain.SwitchPayload, projectRoot string) (domain.SwitchPlan, error) {
+func (a *projectAdapter) Preview(payload domain.SwitchPayload, projectRoot string, mode domain.SwitchMode, destinationOverride string) (domain.SwitchPlan, error) {
+	if mode == domain.SwitchModeNative {
+		return a.previewNative(payload, projectRoot, destinationOverride)
+	}
+	return a.previewProject(payload, projectRoot, destinationOverride)
+}
+
+func (a *projectAdapter) previewProject(payload domain.SwitchPayload, projectRoot string, destinationOverride string) (domain.SwitchPlan, error) {
 	report, err := doctor.Analyze(doctor.Options{
 		Bundle: payload.Bundle,
 		Target: a.target,
@@ -41,15 +52,21 @@ func (a *projectAdapter) Preview(payload domain.SwitchPayload, projectRoot strin
 		return domain.SwitchPlan{}, err
 	}
 
-	managed := managedRoot(projectRoot, a.target)
-	instructionPath := a.instructionPath(projectRoot)
+	destinationRoot := projectRoot
+	if strings.TrimSpace(destinationOverride) != "" {
+		destinationRoot = destinationOverride
+	}
+	managed := managedRoot(destinationRoot, a.target)
+	instructionPath := a.instructionPath(destinationRoot)
 	sessionFiles := append(bundleManagedFiles(payload.Bundle, report, managed), instructionPath)
 	skillFiles := a.skillFiles(managed, payload.Skills)
-	mcpFiles := a.mcpFiles(projectRoot, managed, payload.MCP)
+	mcpFiles := a.mcpFiles(destinationRoot, managed, payload.MCP)
 
 	plan := domain.SwitchPlan{
+		Mode:          domain.SwitchModeProject,
 		TargetTool:    a.target,
 		ProjectRoot:   projectRoot,
+		DestinationRoot: destinationRoot,
 		ManagedRoot:   managed,
 		Compatibility: report,
 		Session: domain.SwitchComponentPlan{
@@ -101,12 +118,12 @@ func (a *projectAdapter) ApplyProject(payload domain.SwitchPayload, plan domain.
 	if err != nil {
 		return report, err
 	}
-	report.AppliedMode = "project_native"
+	report.AppliedMode = string(domain.SwitchModeProject)
 	return report, nil
 }
 
 func (a *projectAdapter) ApplyNativeProject(payload domain.SwitchPayload, plan domain.SwitchPlan) (domain.ApplyReport, error) {
-	return a.ApplyProject(payload, plan)
+	return a.applyNative(payload, plan)
 }
 
 func (a *projectAdapter) ExportProject(payload domain.SwitchPayload, plan domain.SwitchPlan) (domain.ApplyReport, error) {
@@ -114,16 +131,21 @@ func (a *projectAdapter) ExportProject(payload domain.SwitchPayload, plan domain
 	if err != nil {
 		return report, err
 	}
-	report.AppliedMode = "export_only"
+	report.AppliedMode = string(domain.SwitchModeProject)
 	return report, nil
+}
+
+func (a *projectAdapter) ExportNative(payload domain.SwitchPayload, plan domain.SwitchPlan) (domain.ApplyReport, error) {
+	return a.exportNative(payload, plan)
 }
 
 func (a *projectAdapter) applyPlan(payload domain.SwitchPayload, plan domain.SwitchPlan) (domain.ApplyReport, error) {
 	report := domain.ApplyReport{
-		TargetTool:  a.target,
-		ProjectRoot: plan.ProjectRoot,
-		ManagedRoot: plan.ManagedRoot,
-		Status:      domain.SwitchStateApplied,
+		TargetTool:      a.target,
+		ProjectRoot:     plan.ProjectRoot,
+		DestinationRoot: plan.DestinationRoot,
+		ManagedRoot:     plan.ManagedRoot,
+		Status:          domain.SwitchStateApplied,
 		Session: domain.ApplyComponentResult{
 			State: domain.SwitchStateApplied,
 		},
@@ -334,7 +356,7 @@ func (a *projectAdapter) writeMCP(payload domain.SwitchPayload, plan domain.Swit
 		backups = append(backups, backup)
 	}
 
-	configPath := a.configPath(plan.ProjectRoot)
+	configPath := a.configPath(plan.DestinationRoot)
 	if configPath == "" || len(payload.MCP.Servers) == 0 {
 		return dedupeStrings(updated), dedupeStrings(backups), dedupeStrings(warnings), state, nil
 	}
@@ -361,7 +383,7 @@ func (a *projectAdapter) writeMCP(payload domain.SwitchPayload, plan domain.Swit
 }
 
 func (a *projectAdapter) writeInstructionFile(payload domain.SwitchPayload, plan domain.SwitchPlan) ([]string, []string, error) {
-	targetPath := a.instructionPath(plan.ProjectRoot)
+	targetPath := a.instructionPath(plan.DestinationRoot)
 	existing, _ := a.fs.ReadFile(targetPath)
 	next := upsertManagedBlock(string(existing), a.renderManagedBlock(payload, plan))
 	changed, backup, err := a.writeFile(targetPath, next)
@@ -384,9 +406,10 @@ func (a *projectAdapter) renderManagedBlock(payload domain.SwitchPayload, plan d
 		managedBlockStart,
 		fmt.Sprintf("## work-bridge %s switch", strings.ToUpper(string(a.target))),
 		"",
+		fmt.Sprintf("- Mode: `%s`", plan.Mode),
 		fmt.Sprintf("- Source: `%s`", payload.Bundle.SourceTool),
 		fmt.Sprintf("- Session: `%s`", payload.Bundle.SourceSessionID),
-		fmt.Sprintf("- Managed root: `%s`", relativeProjectPath(plan.ProjectRoot, plan.ManagedRoot)),
+		fmt.Sprintf("- Destination: `%s`", relativeProjectPath(plan.ProjectRoot, plan.DestinationRoot)),
 	}
 	if payload.Bundle.TaskTitle != "" {
 		lines = append(lines, fmt.Sprintf("- Task: %s", payload.Bundle.TaskTitle))
