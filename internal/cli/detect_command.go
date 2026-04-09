@@ -21,10 +21,11 @@ func (a *App) runDetect(cmd *cobra.Command, _ []string) error {
 	}
 
 	report, err := detect.Run(detect.Options{
-		FS:       a.fs,
-		CWD:      cwd,
-		HomeDir:  homeDir,
-		LookPath: a.look,
+		FS:        a.fs,
+		CWD:       cwd,
+		HomeDir:   homeDir,
+		ToolPaths: a.config.Paths,
+		LookPath:  a.look,
 	})
 	if err != nil {
 		return err

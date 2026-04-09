@@ -21,10 +21,18 @@ type Options struct {
 	FS         fsx.FS
 	CWD        string
 	HomeDir    string
+	ToolPaths  domain.ToolPaths
 	Tool       string
 	Session    string
 	ImportedAt string
+	Redaction  domain.RedactionPolicy
 	LookPath   func(string) (string, error)
+}
+
+type settingsImport struct {
+	Snapshot   domain.SettingsSnapshot
+	Redactions []string
+	Warnings   []string
 }
 
 type SessionNotFoundError struct {
@@ -37,6 +45,14 @@ func (e *SessionNotFoundError) Error() string {
 }
 
 func Import(opts Options) (domain.SessionBundle, error) {
+	raw, err := ImportRaw(opts)
+	if err != nil {
+		return domain.SessionBundle{}, err
+	}
+	return NewSessionNormalizer().Normalize(raw)
+}
+
+func ImportRaw(opts Options) (RawImportResult, error) {
 	switch opts.Tool {
 	case "codex":
 		return importCodex(opts)
@@ -45,7 +61,7 @@ func Import(opts Options) (domain.SessionBundle, error) {
 	case "claude":
 		return importClaude(opts)
 	default:
-		return domain.SessionBundle{}, fmt.Errorf("unsupported tool %q", opts.Tool)
+		return RawImportResult{}, fmt.Errorf("unsupported tool %q", opts.Tool)
 	}
 }
 
@@ -90,10 +106,14 @@ func readInstructionArtifacts(fs fsx.FS, tool domain.Tool, assets []detect.Artif
 	return artifacts
 }
 
-func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe) domain.SettingsSnapshot {
-	snapshot := domain.SettingsSnapshot{
-		Included:     map[string]any{},
-		ExcludedKeys: []string{},
+func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe, policy domain.RedactionPolicy) settingsImport {
+	result := settingsImport{
+		Snapshot: domain.SettingsSnapshot{
+			Included:     map[string]any{},
+			ExcludedKeys: []string{},
+		},
+		Redactions: []string{},
+		Warnings:   []string{},
 	}
 
 	seenExcluded := map[string]struct{}{}
@@ -121,38 +141,43 @@ func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe) domain.Setti
 		}
 
 		for key, value := range parsed {
-			if isSensitiveKey(key) {
+			if isSensitiveKey(key, policy) {
 				if _, ok := seenExcluded[key]; !ok {
-					snapshot.ExcludedKeys = append(snapshot.ExcludedKeys, key)
+					result.Snapshot.ExcludedKeys = append(result.Snapshot.ExcludedKeys, key)
+					result.Redactions = append(result.Redactions, "settings."+key)
 					seenExcluded[key] = struct{}{}
 				}
 				continue
 			}
 
-			if filtered, ok := simplifySettingValue(value); ok {
-				snapshot.Included[key] = filtered
+			if filtered, ok := simplifySettingValue(value, policy); ok {
+				result.Snapshot.Included[key] = filtered
 				continue
 			}
 
 			if _, ok := seenExcluded[key]; !ok {
-				snapshot.ExcludedKeys = append(snapshot.ExcludedKeys, key)
+				result.Snapshot.ExcludedKeys = append(result.Snapshot.ExcludedKeys, key)
+				result.Redactions = append(result.Redactions, "settings."+key)
 				seenExcluded[key] = struct{}{}
 			}
 		}
 	}
 
-	sort.Strings(snapshot.ExcludedKeys)
-	return snapshot
+	sort.Strings(result.Snapshot.ExcludedKeys)
+	return result
 }
 
-func simplifySettingValue(value any) (any, bool) {
+func simplifySettingValue(value any, policy domain.RedactionPolicy) (any, bool) {
 	switch typed := value.(type) {
 	case string, bool, int64, int32, int16, int8, int, float64, float32:
+		if typedString, ok := typed.(string); ok && policy.DetectSensitiveValues && looksSensitiveValue(typedString) {
+			return nil, false
+		}
 		return typed, true
 	case []any:
 		values := make([]any, 0, len(typed))
 		for _, item := range typed {
-			filtered, ok := simplifySettingValue(item)
+			filtered, ok := simplifySettingValue(item, policy)
 			if !ok {
 				return nil, false
 			}
@@ -162,6 +187,9 @@ func simplifySettingValue(value any) (any, bool) {
 	case []string:
 		values := make([]any, 0, len(typed))
 		for _, item := range typed {
+			if policy.DetectSensitiveValues && looksSensitiveValue(item) {
+				return nil, false
+			}
 			values = append(values, item)
 		}
 		return values, true
@@ -170,12 +198,72 @@ func simplifySettingValue(value any) (any, bool) {
 	}
 }
 
-func isSensitiveKey(key string) bool {
-	key = strings.ToLower(key)
+func isSensitiveKey(key string, policy domain.RedactionPolicy) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
 	for _, needle := range []string{"secret", "token", "password", "auth", "oauth", "credential", "api_key", "apikey"} {
 		if strings.Contains(key, needle) {
 			return true
 		}
 	}
+	for _, needle := range policy.AdditionalSensitiveKeys {
+		needle = strings.ToLower(strings.TrimSpace(needle))
+		if needle != "" && strings.Contains(key, needle) {
+			return true
+		}
+	}
 	return false
+}
+
+func looksSensitiveValue(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(value, "sk-") || strings.HasPrefix(value, "ghp_") || strings.HasPrefix(value, "github_pat_") || strings.HasPrefix(value, "AIza") {
+		return true
+	}
+	return len(value) >= 24 && (strings.Count(value, "_")+strings.Count(value, "-")) >= 2
+}
+
+func mergeSettings(raw *RawImportResult, imported settingsImport) {
+	raw.SettingsSnapshot = imported.Snapshot
+	raw.Redactions = append(raw.Redactions, imported.Redactions...)
+	raw.Warnings = append(raw.Warnings, imported.Warnings...)
+}
+
+func inspectOptions(opts Options, tool string) inspect.Options {
+	return inspect.Options{
+		FS:        opts.FS,
+		CWD:       opts.CWD,
+		HomeDir:   opts.HomeDir,
+		ToolPaths: opts.ToolPaths,
+		Tool:      tool,
+		LookPath:  opts.LookPath,
+		Limit:     1 << 30,
+	}
+}
+
+func defaultToolRoot(opts Options, tool domain.Tool) string {
+	return opts.ToolPaths.Dir(tool, opts.HomeDir)
+}
+
+func sortAndCompact(values []string) []string {
+	sort.Strings(values)
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if len(out) == 0 || out[len(out)-1] != value {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func appendSourceRef(refs []string, value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return refs
+	}
+	return append(refs, value)
 }

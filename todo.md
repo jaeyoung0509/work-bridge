@@ -29,7 +29,7 @@
 
 ## Next
 
-- [ ] Define concrete CLI config schema and precedence rules
+- [x] Define concrete CLI config schema and precedence rules
 - [x] Add degraded-path fixtures (`missing_*`, `corrupt_*`, `secret_*`)
 - [x] Add CLI snapshot goldens
 - [ ] Add doctor matrix fixtures
@@ -46,15 +46,15 @@
 - [x] Gemini `GEMINI.md` import
 - [x] Claude partial instruction/memory import
 - [x] Claude session/history import
-- [ ] Redaction policy hardening for imported settings
-- [ ] Touched file / decision / failure extraction heuristics
-- [ ] Claude raw transcript import when local session storage is available
+- [x] Redaction policy hardening for imported settings
+- [x] Touched file / decision / failure extraction heuristics
+- [x] Claude raw transcript import when local session storage is available
 
 ## Core
 
-- [ ] Raw import -> canonical bundle normalizer
-- [ ] Provenance aggregation
-- [ ] Warning/redaction aggregation
+- [x] Raw import -> canonical bundle normalizer
+- [x] Provenance aggregation
+- [x] Warning/redaction aggregation
 - [ ] Bundle validation pass tightening
 - [x] Doctor compatibility matrix
 
@@ -79,4 +79,5 @@
 - [x] Doctor matrix tests
 - [x] Exporter golden tests
 - [x] CLI snapshot goldens
+- [x] Doctor/export consistency tests
 - [ ] End-to-end CLI snapshots

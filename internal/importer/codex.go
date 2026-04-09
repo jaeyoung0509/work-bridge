@@ -10,66 +10,56 @@ import (
 	"sessionport/internal/inspect"
 )
 
-func importCodex(opts Options) (domain.SessionBundle, error) {
-	report, err := inspect.Run(inspect.Options{
-		FS:       opts.FS,
-		CWD:      opts.CWD,
-		HomeDir:  opts.HomeDir,
-		Tool:     "codex",
-		LookPath: opts.LookPath,
-		Limit:    1 << 30,
-	})
+func importCodex(opts Options) (RawImportResult, error) {
+	report, err := inspect.Run(inspectOptions(opts, "codex"))
 	if err != nil {
-		return domain.SessionBundle{}, err
+		return RawImportResult{}, err
 	}
 
 	session, err := selectSession("codex", opts.Session, report.Sessions)
 	if err != nil {
-		return domain.SessionBundle{}, err
+		return RawImportResult{}, err
 	}
 	if session.StoragePath == "" {
-		return domain.SessionBundle{}, fmt.Errorf("codex session %q has no backing storage path", session.ID)
+		return RawImportResult{}, fmt.Errorf("codex session %q has no backing storage path", session.ID)
 	}
 
-	bundle := domain.NewSessionBundle(domain.ToolCodex, session.ProjectRoot)
-	bundle.BundleID = "bundle-" + session.ID
-	bundle.SourceSessionID = session.ID
-	bundle.ImportedAt = opts.ImportedAt
-	bundle.TaskTitle = session.Title
-	bundle.CurrentGoal = session.Title
-	bundle.Summary = summarizeCodex(session)
-	bundle.SettingsSnapshot = readSettingsSnapshot(opts.FS, report.Assets)
-	bundle.InstructionArtifacts = readInstructionArtifacts(opts.FS, domain.ToolCodex, report.Assets)
-	bundle.ResumeHints = []string{
+	raw := newRawImportResult(domain.ToolCodex)
+	raw.BundleID = "bundle-" + session.ID
+	raw.SourceSessionID = session.ID
+	raw.ImportedAt = opts.ImportedAt
+	raw.ProjectRoot = session.ProjectRoot
+	raw.TaskTitle = session.Title
+	raw.CurrentGoal = session.Title
+	raw.Summary = summarizeCodex(session)
+	mergeSettings(&raw, readSettingsSnapshot(opts.FS, report.Assets, opts.Redaction))
+	raw.InstructionArtifacts = readInstructionArtifacts(opts.FS, domain.ToolCodex, report.Assets)
+	raw.ResumeHints = []string{
 		"source_session_path=" + session.StoragePath,
 		"source_tool=codex",
 	}
-	bundle.Provenance = append(bundle.Provenance, report.Notes...)
+	raw.Provenance = append(raw.Provenance, report.Notes...)
 
-	if err := importCodexSessionFile(opts, session.StoragePath, &bundle); err != nil {
-		return domain.SessionBundle{}, err
-	}
-
-	if bundle.ProjectRoot == "" {
-		bundle.ProjectRoot = session.ProjectRoot
-	}
-	if bundle.TaskTitle == "" {
-		bundle.TaskTitle = session.Title
-	}
-	if bundle.CurrentGoal == "" {
-		bundle.CurrentGoal = bundle.TaskTitle
-	}
-	if bundle.Summary == "" {
-		bundle.Summary = summarizeCodex(session)
+	if err := importCodexSessionFile(opts, session.StoragePath, &raw); err != nil {
+		return RawImportResult{}, err
 	}
 
-	if err := bundle.Validate(); err != nil {
-		return domain.SessionBundle{}, err
+	if raw.ProjectRoot == "" {
+		raw.ProjectRoot = session.ProjectRoot
 	}
-	return bundle, nil
+	if raw.TaskTitle == "" {
+		raw.TaskTitle = session.Title
+	}
+	if raw.CurrentGoal == "" {
+		raw.CurrentGoal = raw.TaskTitle
+	}
+	if raw.Summary == "" {
+		raw.Summary = summarizeCodex(session)
+	}
+	return raw, nil
 }
 
-func importCodexSessionFile(opts Options, path string, bundle *domain.SessionBundle) error {
+func importCodexSessionFile(opts Options, path string, raw *RawImportResult) error {
 	data, err := opts.FS.ReadFile(path)
 	if err != nil {
 		return err
@@ -101,13 +91,13 @@ func importCodexSessionFile(opts Options, path string, bundle *domain.SessionBun
 				CWD       string `json:"cwd"`
 			}
 			if err := json.Unmarshal(record.Payload, &payload); err == nil {
-				if bundle.SourceSessionID == "" {
-					bundle.SourceSessionID = payload.ID
+				if raw.SourceSessionID == "" {
+					raw.SourceSessionID = payload.ID
 				}
-				if bundle.ProjectRoot == "" {
-					bundle.ProjectRoot = payload.CWD
+				if raw.ProjectRoot == "" {
+					raw.ProjectRoot = payload.CWD
 				}
-				bundle.Provenance = append(bundle.Provenance, "codex.session_meta")
+				raw.Provenance = append(raw.Provenance, "codex.session_meta")
 			}
 		case "response_item":
 			var envelope struct {
@@ -121,13 +111,13 @@ func importCodexSessionFile(opts Options, path string, bundle *domain.SessionBun
 				continue
 			}
 			if envelope.Type == "function_call" {
-				bundle.ToolEvents = append(bundle.ToolEvents, domain.ToolEvent{
+				addToolCallSignal(raw, domain.ToolEvent{
 					Type:      "tool_call",
 					Summary:   summarizeCodexFunctionCall(envelope.Name, envelope.Arguments),
 					Timestamp: record.Timestamp,
 					Status:    "called",
 					RawRef:    envelope.CallID,
-				})
+				}, envelope.Arguments)
 			}
 		case "event_msg":
 			var envelope struct {
@@ -143,12 +133,13 @@ func importCodexSessionFile(opts Options, path string, bundle *domain.SessionBun
 			switch envelope.Type {
 			case "token_count":
 				for key, value := range envelope.Info.TotalTokenUsage {
-					bundle.TokenStats[key] = value
+					raw.TokenStats[key] = value
 				}
 			case "agent_message":
-				if bundle.Summary == "" && envelope.Message != "" {
-					bundle.Summary = truncateText(envelope.Message, 160)
+				if raw.Summary == "" && envelope.Message != "" {
+					raw.Summary = truncateText(envelope.Message, 160)
 				}
+				addNarrativeSignals(raw, envelope.Message, record.Timestamp)
 			}
 		}
 	}

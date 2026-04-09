@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"sessionport/internal/capability"
 	"sessionport/internal/domain"
 )
 
@@ -13,14 +14,20 @@ type Options struct {
 }
 
 func Analyze(opts Options) (domain.CompatibilityReport, error) {
+	if opts.Bundle.AssetKind == "" {
+		opts.Bundle.AssetKind = domain.AssetKindSession
+	}
 	if err := opts.Bundle.Validate(); err != nil {
 		return domain.CompatibilityReport{}, err
 	}
-	if !opts.Target.IsKnown() {
-		return domain.CompatibilityReport{}, fmt.Errorf("unsupported target tool %q", opts.Target)
+
+	profile, err := capability.ProfileFor(opts.Target, opts.Bundle.AssetKind)
+	if err != nil {
+		return domain.CompatibilityReport{}, err
 	}
 
 	report := domain.CompatibilityReport{
+		AssetKind:          opts.Bundle.AssetKind,
 		BundleID:           opts.Bundle.BundleID,
 		SourceTool:         opts.Bundle.SourceTool,
 		SourceSessionID:    opts.Bundle.SourceSessionID,
@@ -29,67 +36,55 @@ func Analyze(opts Options) (domain.CompatibilityReport, error) {
 		CompatibleFields:   []string{},
 		PartialFields:      []string{},
 		UnsupportedFields:  []string{},
-		RedactedFields:     []string{},
-		GeneratedArtifacts: generatedArtifactsFor(opts.Target),
+		RedactedFields:     append(append([]string{}, opts.Bundle.Redactions...), settingsRedactions(opts.Bundle.SettingsSnapshot)...),
+		GeneratedArtifacts: append([]string{}, profile.GeneratedArtifacts...),
 		Warnings:           []string{},
 	}
 
-	if opts.Bundle.ProjectRoot != "" {
-		report.CompatibleFields = append(report.CompatibleFields, "project_root")
+	appendPresentField := func(field string, present bool) {
+		if !present {
+			return
+		}
+		switch profile.FieldSupport[field] {
+		case capability.SupportCompatible:
+			report.CompatibleFields = append(report.CompatibleFields, field)
+		case capability.SupportPartial:
+			report.PartialFields = append(report.PartialFields, field)
+		case capability.SupportUnsupported:
+			report.UnsupportedFields = append(report.UnsupportedFields, field)
+		}
 	}
-	if opts.Bundle.TaskTitle != "" {
-		report.CompatibleFields = append(report.CompatibleFields, "task_title")
-	}
-	if opts.Bundle.CurrentGoal != "" {
-		report.CompatibleFields = append(report.CompatibleFields, "current_goal")
-	}
-	if opts.Bundle.Summary != "" {
-		report.CompatibleFields = append(report.CompatibleFields, "summary")
-	}
+
+	appendPresentField("project_root", opts.Bundle.ProjectRoot != "")
+	appendPresentField("task_title", opts.Bundle.TaskTitle != "")
+	appendPresentField("current_goal", opts.Bundle.CurrentGoal != "")
+	appendPresentField("summary", opts.Bundle.Summary != "")
 	if len(opts.Bundle.InstructionArtifacts) > 0 {
-		report.CompatibleFields = append(report.CompatibleFields, "instruction_artifacts")
+		appendPresentField("instruction_artifacts", true)
 	} else {
 		report.Warnings = append(report.Warnings, "No instruction artifacts were imported; target bootstrap will rely on summary and prompt notes only.")
 	}
+	appendPresentField("settings_snapshot", len(opts.Bundle.SettingsSnapshot.Included) > 0 || len(opts.Bundle.SettingsSnapshot.ExcludedKeys) > 0)
+	appendPresentField("tool_events", len(opts.Bundle.ToolEvents) > 0)
+	appendPresentField("tool_outputs", len(opts.Bundle.ToolEvents) > 0)
+	appendPresentField("touched_files", len(opts.Bundle.TouchedFiles) > 0)
+	appendPresentField("decisions", len(opts.Bundle.Decisions) > 0)
+	appendPresentField("failures", len(opts.Bundle.Failures) > 0)
+	appendPresentField("resume_hints", len(opts.Bundle.ResumeHints) > 0)
+	appendPresentField("token_stats", len(opts.Bundle.TokenStats) > 0)
+	appendPresentField("raw_transcript", true)
 
-	if len(opts.Bundle.SettingsSnapshot.Included) > 0 || len(opts.Bundle.SettingsSnapshot.ExcludedKeys) > 0 {
-		report.PartialFields = append(report.PartialFields, "settings_snapshot")
+	for field, support := range profile.FieldSupport {
+		if support == capability.SupportUnsupported {
+			report.UnsupportedFields = append(report.UnsupportedFields, field)
+		}
 	}
-	report.PartialFields = append(report.PartialFields, "raw_transcript")
-
-	if len(opts.Bundle.ToolEvents) > 0 {
-		report.PartialFields = append(report.PartialFields, "tool_events")
-		report.PartialFields = append(report.PartialFields, "tool_outputs")
-	}
-	if len(opts.Bundle.TouchedFiles) > 0 {
-		report.PartialFields = append(report.PartialFields, "touched_files")
-	}
-	if len(opts.Bundle.Decisions) > 0 {
-		report.PartialFields = append(report.PartialFields, "decisions")
-	}
-	if len(opts.Bundle.Failures) > 0 {
-		report.PartialFields = append(report.PartialFields, "failures")
-	}
-	if len(opts.Bundle.ResumeHints) > 0 {
-		report.PartialFields = append(report.PartialFields, "resume_hints")
-	}
-	if len(opts.Bundle.TokenStats) > 0 {
-		report.PartialFields = append(report.PartialFields, "token_stats")
-	}
-
-	report.UnsupportedFields = append(report.UnsupportedFields,
-		"hidden_reasoning",
-		"vendor_specific_options",
-		"native_hook_plugin_state",
-	)
-
-	for _, key := range opts.Bundle.SettingsSnapshot.ExcludedKeys {
-		report.RedactedFields = append(report.RedactedFields, "settings."+key)
-	}
-	report.RedactedFields = append(report.RedactedFields, opts.Bundle.Redactions...)
 
 	report.Warnings = append(report.Warnings, opts.Bundle.Warnings...)
-	report.Warnings = append(report.Warnings, policyWarnings(opts.Target, opts.Bundle)...)
+	report.Warnings = append(report.Warnings, profile.Warnings...)
+	if len(opts.Bundle.ResumeHints) > 0 {
+		report.Warnings = append(report.Warnings, "Source-native resume hints are carried as plain notes only and do not recreate native resume state.")
+	}
 
 	if len(opts.Bundle.SettingsSnapshot.ExcludedKeys) > 0 {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("%d settings keys remain redacted in portability output.", len(opts.Bundle.SettingsSnapshot.ExcludedKeys)))
@@ -108,51 +103,6 @@ func Analyze(opts Options) (domain.CompatibilityReport, error) {
 	return report, nil
 }
 
-func generatedArtifactsFor(target domain.Tool) []string {
-	switch target {
-	case domain.ToolCodex:
-		return []string{
-			"AGENTS.sessionport.md",
-			"CONFIG_HINTS.md",
-			"STARTER_PROMPT.md",
-		}
-	case domain.ToolGemini:
-		return []string{
-			"GEMINI.sessionport.md",
-			"SETTINGS_PATCH.json",
-			"STARTER_PROMPT.md",
-		}
-	case domain.ToolClaude:
-		return []string{
-			"CLAUDE.sessionport.md",
-			"MEMORY_NOTE.md",
-			"STARTER_PROMPT.md",
-		}
-	default:
-		return nil
-	}
-}
-
-func policyWarnings(target domain.Tool, bundle domain.SessionBundle) []string {
-	warnings := []string{}
-
-	if len(bundle.ResumeHints) > 0 {
-		warnings = append(warnings, "Source-native resume hints are carried as plain notes only and do not recreate native resume state.")
-	}
-
-	switch target {
-	case domain.ToolCodex:
-		warnings = append(warnings, "Codex export will provide config hints only; vendor-native session resume state is not reconstructed.")
-	case domain.ToolGemini:
-		warnings = append(warnings, "Gemini export will emit a settings patch suggestion rather than replacing the full local profile.")
-	case domain.ToolClaude:
-		warnings = append(warnings, "Claude export will convert portable context into CLAUDE.md supplements and plain memory notes.")
-	default:
-	}
-
-	return warnings
-}
-
 func uniqueSorted(values []string) []string {
 	if len(values) == 0 {
 		return []string{}
@@ -169,4 +119,19 @@ func uniqueSorted(values []string) []string {
 		}
 	}
 	return deduped
+}
+
+func settingsRedactions(snapshot domain.SettingsSnapshot) []string {
+	if len(snapshot.ExcludedKeys) == 0 {
+		return []string{}
+	}
+
+	values := make([]string, 0, len(snapshot.ExcludedKeys))
+	for _, key := range snapshot.ExcludedKeys {
+		if key == "" {
+			continue
+		}
+		values = append(values, "settings."+key)
+	}
+	return values
 }

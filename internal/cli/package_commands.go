@@ -26,6 +26,9 @@ func (a *App) runPack(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if outPath == "" {
+		outPath = a.config.Output.PackagePath
+	}
+	if outPath == "" {
 		return newExitError(ExitUsage, "--out is required")
 	}
 
@@ -35,24 +38,12 @@ func (a *App) runPack(cmd *cobra.Command, _ []string) error {
 		return newExitError(ExitUsage, fmt.Sprintf("unsupported source tool %q (expected codex, gemini, or claude)", from))
 	}
 
-	cwd, err := a.getwd()
+	cwd, homeDir, err := a.resolveWorkingDirs()
 	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	homeDir, err := a.home()
-	if err != nil {
-		return fmt.Errorf("resolve home directory: %w", err)
+		return err
 	}
 
-	bundle, err := importer.Import(importer.Options{
-		FS:         a.fs,
-		CWD:        cwd,
-		HomeDir:    homeDir,
-		Tool:       from,
-		Session:    sessionID,
-		ImportedAt: a.clock.Now().Format("2006-01-02T15:04:05Z07:00"),
-		LookPath:   a.look,
-	})
+	bundle, err := importer.Import(a.importerOptions(cwd, homeDir, from, sessionID))
 	if err != nil {
 		var notFound *importer.SessionNotFoundError
 		if errors.As(err, &notFound) {
@@ -99,6 +90,9 @@ func (a *App) runUnpack(cmd *cobra.Command, _ []string) error {
 	outDir, err := cmd.Flags().GetString("out")
 	if err != nil {
 		return err
+	}
+	if outDir == "" {
+		outDir = a.config.Output.UnpackDir
 	}
 	if filePath == "" {
 		return newExitError(ExitUsage, "--file is required")

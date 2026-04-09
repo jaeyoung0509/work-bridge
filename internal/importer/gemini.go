@@ -9,72 +9,66 @@ import (
 	"sessionport/internal/inspect"
 )
 
-func importGemini(opts Options) (domain.SessionBundle, error) {
-	report, err := inspect.Run(inspect.Options{
-		FS:       opts.FS,
-		CWD:      opts.CWD,
-		HomeDir:  opts.HomeDir,
-		Tool:     "gemini",
-		LookPath: opts.LookPath,
-		Limit:    1 << 30,
-	})
+func importGemini(opts Options) (RawImportResult, error) {
+	report, err := inspect.Run(inspectOptions(opts, "gemini"))
 	if err != nil {
-		return domain.SessionBundle{}, err
+		return RawImportResult{}, err
 	}
 
 	session, err := selectSession("gemini", opts.Session, report.Sessions)
 	if err != nil {
-		return domain.SessionBundle{}, err
+		return RawImportResult{}, err
 	}
 	if session.StoragePath == "" {
-		return domain.SessionBundle{}, fmt.Errorf("gemini session %q has no backing storage path", session.ID)
+		return RawImportResult{}, fmt.Errorf("gemini session %q has no backing storage path", session.ID)
 	}
 
-	bundle := domain.NewSessionBundle(domain.ToolGemini, session.ProjectRoot)
-	bundle.BundleID = "bundle-" + session.ID
-	bundle.SourceSessionID = session.ID
-	bundle.ImportedAt = opts.ImportedAt
-	bundle.TaskTitle = session.Title
-	bundle.CurrentGoal = session.Title
-	bundle.Summary = summarizeGemini(session)
-	bundle.SettingsSnapshot = readSettingsSnapshot(opts.FS, report.Assets)
-	bundle.InstructionArtifacts = readInstructionArtifacts(opts.FS, domain.ToolGemini, report.Assets)
-	bundle.ResumeHints = []string{
+	raw := newRawImportResult(domain.ToolGemini)
+	raw.BundleID = "bundle-" + session.ID
+	raw.SourceSessionID = session.ID
+	raw.ImportedAt = opts.ImportedAt
+	raw.ProjectRoot = session.ProjectRoot
+	raw.TaskTitle = session.Title
+	raw.CurrentGoal = session.Title
+	raw.Summary = summarizeGemini(session)
+	mergeSettings(&raw, readSettingsSnapshot(opts.FS, report.Assets, opts.Redaction))
+	raw.InstructionArtifacts = readInstructionArtifacts(opts.FS, domain.ToolGemini, report.Assets)
+	raw.ResumeHints = []string{
 		"source_session_path=" + session.StoragePath,
 		"source_tool=gemini",
 	}
-	bundle.Provenance = append(bundle.Provenance, report.Notes...)
+	raw.Provenance = append(raw.Provenance, report.Notes...)
 
-	if err := importGeminiSessionFile(opts, session.StoragePath, &bundle); err != nil {
-		return domain.SessionBundle{}, err
-	}
-
-	if bundle.ProjectRoot == "" {
-		bundle.ProjectRoot = session.ProjectRoot
-	}
-	if bundle.TaskTitle == "" {
-		bundle.TaskTitle = session.Title
-	}
-	if bundle.CurrentGoal == "" {
-		bundle.CurrentGoal = bundle.TaskTitle
-	}
-	if bundle.Summary == "" {
-		bundle.Summary = summarizeGemini(session)
+	if err := importGeminiSessionFile(opts, session.StoragePath, &raw); err != nil {
+		return RawImportResult{}, err
 	}
 
-	if err := bundle.Validate(); err != nil {
-		return domain.SessionBundle{}, err
+	if raw.ProjectRoot == "" {
+		raw.ProjectRoot = session.ProjectRoot
 	}
-	return bundle, nil
+	if raw.ProjectRoot == "" {
+		raw.ProjectRoot = opts.CWD
+		raw.Warnings = append(raw.Warnings, "Gemini session did not map to a known project root; importer fell back to the current workspace.")
+	}
+	if raw.TaskTitle == "" {
+		raw.TaskTitle = session.Title
+	}
+	if raw.CurrentGoal == "" {
+		raw.CurrentGoal = raw.TaskTitle
+	}
+	if raw.Summary == "" {
+		raw.Summary = summarizeGemini(session)
+	}
+	return raw, nil
 }
 
-func importGeminiSessionFile(opts Options, path string, bundle *domain.SessionBundle) error {
+func importGeminiSessionFile(opts Options, path string, raw *RawImportResult) error {
 	data, err := opts.FS.ReadFile(path)
 	if err != nil {
 		return err
 	}
 
-	var raw struct {
+	var sessionData struct {
 		SessionID   string `json:"sessionId"`
 		StartTime   string `json:"startTime"`
 		LastUpdated string `json:"lastUpdated"`
@@ -92,41 +86,42 @@ func importGeminiSessionFile(opts Options, path string, bundle *domain.SessionBu
 			Tokens map[string]int64 `json:"tokens"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := json.Unmarshal(data, &sessionData); err != nil {
 		return err
 	}
 
-	if bundle.SourceSessionID == "" {
-		bundle.SourceSessionID = raw.SessionID
+	if raw.SourceSessionID == "" {
+		raw.SourceSessionID = sessionData.SessionID
 	}
 
-	for _, message := range raw.Messages {
-		if bundle.CurrentGoal == "" && message.Type == "user" {
+	for _, message := range sessionData.Messages {
+		if raw.CurrentGoal == "" && message.Type == "user" {
 			if text := geminiContentToText(message.Content); text != "" {
-				bundle.CurrentGoal = truncateText(text, 160)
-				if bundle.TaskTitle == "" {
-					bundle.TaskTitle = truncateText(text, 80)
+				raw.CurrentGoal = truncateText(text, 160)
+				if raw.TaskTitle == "" {
+					raw.TaskTitle = truncateText(text, 80)
 				}
 			}
 		}
-		if bundle.Summary == "" && message.Type == "gemini" {
+		if raw.Summary == "" && message.Type == "gemini" {
 			if text := geminiContentToText(message.Content); text != "" {
-				bundle.Summary = truncateText(text, 160)
+				raw.Summary = truncateText(text, 160)
 			}
 		}
+		addNarrativeSignals(raw, geminiContentToText(message.Content), message.Timestamp)
 
 		for key, value := range message.Tokens {
-			bundle.TokenStats[key] += value
+			raw.TokenStats[key] += value
 		}
 
 		for _, call := range message.ToolCalls {
-			bundle.ToolEvents = append(bundle.ToolEvents, domain.ToolEvent{
+			addToolCallSignal(raw, domain.ToolEvent{
 				Type:      "tool_call",
 				Summary:   summarizeGeminiToolCall(call.Name, call.Args),
 				Timestamp: call.Timestamp,
 				Status:    call.Status,
 				RawRef:    call.ID,
-			})
+			}, call.Args)
 		}
 	}
 

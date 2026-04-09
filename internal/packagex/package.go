@@ -40,6 +40,9 @@ func Pack(opts PackOptions) (domain.PackageManifest, error) {
 	if opts.OutFile == "" {
 		return domain.PackageManifest{}, errors.New("out_file is required")
 	}
+	if opts.Bundle.AssetKind == "" {
+		opts.Bundle.AssetKind = domain.AssetKindSession
+	}
 	if err := opts.Bundle.Validate(); err != nil {
 		return domain.PackageManifest{}, err
 	}
@@ -51,6 +54,7 @@ func Pack(opts PackOptions) (domain.PackageManifest, error) {
 
 	manifest := domain.PackageManifest{
 		ArchiveVersion:  archiveVersion,
+		AssetKind:       opts.Bundle.AssetKind,
 		BundleID:        opts.Bundle.BundleID,
 		SourceTool:      opts.Bundle.SourceTool,
 		SourceSessionID: opts.Bundle.SourceSessionID,
@@ -112,6 +116,9 @@ func Unpack(opts UnpackOptions) (domain.UnpackResult, error) {
 	var bundle domain.SessionBundle
 	if err := json.Unmarshal(bundleData, &bundle); err != nil {
 		return domain.UnpackResult{}, err
+	}
+	if bundle.AssetKind == "" {
+		bundle.AssetKind = domain.AssetKindSession
 	}
 	if err := bundle.Validate(); err != nil {
 		return domain.UnpackResult{}, err

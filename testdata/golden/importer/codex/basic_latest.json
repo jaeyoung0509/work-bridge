@@ -1,4 +1,5 @@
 {
+  "asset_kind": "session",
   "bundle_version": "v0",
   "bundle_id": "bundle-codex-session",
   "source_tool": "codex",
@@ -47,7 +48,9 @@
       "raw_ref": "call_1"
     }
   ],
-  "touched_files": [],
+  "touched_files": [
+    "README.md"
+  ],
   "decisions": [],
   "failures": [],
   "resume_hints": [
@@ -64,6 +67,9 @@
     "Session inventory comes from ~/.codex/session_index.jsonl and session_meta records in ~/.codex/sessions.",
     "codex.session_meta"
   ],
-  "redactions": [],
+  "redactions": [
+    "settings.auth_token",
+    "settings.experimental"
+  ],
   "warnings": []
 }

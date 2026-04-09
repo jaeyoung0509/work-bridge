@@ -1,4 +1,5 @@
 {
+  "asset_kind": "session",
   "bundle_version": "v0",
   "bundle_id": "bundle-gemini-session",
   "source_tool": "gemini",
@@ -44,7 +45,9 @@
       "raw_ref": "tool_1"
     }
   ],
-  "touched_files": [],
+  "touched_files": [
+    "docs.md"
+  ],
   "decisions": [],
   "failures": [],
   "resume_hints": [
@@ -60,6 +63,9 @@
     "Detects default GEMINI.md and settings.json locations only. Custom context.fileName values are not resolved yet.",
     "Session inventory comes from ~/.gemini/projects.json and ~/.gemini/tmp/*/chats/session-*.json."
   ],
-  "redactions": [],
+  "redactions": [
+    "settings.apiToken",
+    "settings.history"
+  ],
   "warnings": []
 }

@@ -24,6 +24,9 @@ func (a *App) runExport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	if outDir == "" {
+		outDir = a.config.Output.ExportDir
+	}
 
 	if bundlePath == "" {
 		return newExitError(ExitUsage, "--bundle is required")
@@ -45,6 +48,9 @@ func (a *App) runExport(cmd *cobra.Command, _ []string) error {
 	var bundle domain.SessionBundle
 	if err := json.Unmarshal(data, &bundle); err != nil {
 		return newExitError(ExitParseFailure, fmt.Sprintf("parse bundle %q: %v", bundlePath, err))
+	}
+	if bundle.AssetKind == "" {
+		bundle.AssetKind = domain.AssetKindSession
 	}
 	if err := bundle.Validate(); err != nil {
 		return newExitError(ExitParseFailure, fmt.Sprintf("validate bundle %q: %v", bundlePath, err))
