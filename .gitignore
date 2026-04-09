@@ -1,4 +1,4 @@
 bin/*
-!bin/sessionport.js
+!bin/work-bridge.js
 dist/
 .DS_Store
