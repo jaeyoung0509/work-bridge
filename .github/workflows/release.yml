@@ -48,7 +48,7 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Set npm version
-        run: npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
