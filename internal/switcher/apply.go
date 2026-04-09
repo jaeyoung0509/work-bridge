@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	gotoml "github.com/pelletier/go-toml/v2"
+
 	"github.com/jaeyoung0509/work-bridge/internal/doctor"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
 	"github.com/jaeyoung0509/work-bridge/internal/exporter"
@@ -187,6 +189,16 @@ func (a *projectAdapter) applyPlan(payload domain.SwitchPayload, plan domain.Swi
 	if report.MCP.State == domain.SwitchStatePartial {
 		report.Status = domain.SwitchStatePartial
 	}
+
+	// Post-apply: perform agent-native storage patches (CWD rewrite, index
+	// busting, project registry injection, etc.).
+	if nativeWarnings := a.applyNativePatches(payload, plan); len(nativeWarnings) > 0 {
+		report.Warnings = dedupeStrings(append(report.Warnings, nativeWarnings...))
+		if report.Status == domain.SwitchStateApplied {
+			report.Status = domain.SwitchStatePartial
+		}
+	}
+
 	return report, nil
 }
 
@@ -432,12 +444,24 @@ func (a *projectAdapter) configPath(projectRoot string) string {
 		return filepath.Join(projectRoot, ".gemini", "settings.json")
 	case domain.ToolOpenCode:
 		return filepath.Join(projectRoot, ".opencode", "opencode.jsonc")
+	case domain.ToolCodex:
+		// Codex stores MCP config in project-local codex.toml when present.
+		return filepath.Join(projectRoot, ".codex", "config.toml")
 	default:
 		return ""
 	}
 }
 
 func (a *projectAdapter) renderTargetConfig(path string, payload domain.MCPPayload) (string, string, error) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".toml":
+		return a.renderTargetConfigTOML(path, payload)
+	default:
+		return a.renderTargetConfigJSON(path, payload)
+	}
+}
+
+func (a *projectAdapter) renderTargetConfigJSON(path string, payload domain.MCPPayload) (string, string, error) {
 	field := "mcpServers"
 	if a.target == domain.ToolOpenCode {
 		field = "mcp_servers"
@@ -461,6 +485,38 @@ func (a *projectAdapter) renderTargetConfig(path string, payload domain.MCPPaylo
 		return "", "", err
 	}
 	return string(data) + "\n", "", nil
+}
+
+// renderTargetConfigTOML generates a TOML MCP config for Codex.
+// Codex reads [mcp.servers.<name>] tables from the project-local .codex/config.toml.
+func (a *projectAdapter) renderTargetConfigTOML(path string, payload domain.MCPPayload) (string, string, error) {
+	var config map[string]any
+	if existing, err := a.fs.ReadFile(path); err == nil && len(existing) > 0 {
+		if err := gotoml.Unmarshal(existing, &config); err != nil {
+			return "", fmt.Sprintf("skipped Codex TOML MCP patch for %s: %v", filepath.Base(path), err), err
+		}
+	}
+	if config == nil {
+		config = map[string]any{}
+	}
+
+	servers := map[string]any{}
+	for name, srv := range marshalMCPServers(payload.Servers) {
+		servers[name] = srv
+	}
+	// Codex uses [mcp] top-level key with a servers sub-table.
+	mcpSection, _ := config["mcp"].(map[string]any)
+	if mcpSection == nil {
+		mcpSection = map[string]any{}
+	}
+	mcpSection["servers"] = servers
+	config["mcp"] = mcpSection
+
+	out, err := gotoml.Marshal(config)
+	if err != nil {
+		return "", "", err
+	}
+	return string(out), "", nil
 }
 
 func marshalMCPServers(servers map[string]domain.MCPServerConfig) map[string]any {

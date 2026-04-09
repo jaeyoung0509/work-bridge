@@ -175,8 +175,10 @@ func TestApplyHonorsSessionOnlyAndCodexSkipsConfigPatch(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(fixture.WorkspaceDir, ".work-bridge", "codex", "mcp.json")); err != nil {
 		t.Fatalf("expected codex managed MCP file: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(fixture.WorkspaceDir, ".codex", "config.toml")); err == nil {
-		t.Fatalf("did not expect codex project config patch")
+	// Codex now supports a project-local .codex/config.toml for MCP servers.
+	// When MCP servers are present, the config.toml should be written.
+	if _, err := os.Stat(filepath.Join(fixture.WorkspaceDir, ".codex", "config.toml")); err != nil {
+		t.Fatalf("expected codex project config.toml to be written with MCP servers: %v", err)
 	}
 
 	result, err = service.Apply(context.Background(), Request{
@@ -274,6 +276,8 @@ func (osFS) WriteFile(name string, data []byte, perm os.FileMode) error { return
 func (osFS) Stat(name string) (os.FileInfo, error)                     { return os.Stat(name) }
 func (osFS) ReadDir(name string) ([]os.DirEntry, error)                { return os.ReadDir(name) }
 func (osFS) MkdirAll(path string, perm os.FileMode) error              { return os.MkdirAll(path, perm) }
+func (osFS) Remove(name string) error                                  { return os.Remove(name) }
+
 
 func writeFile(t *testing.T, path string, body string) {
 	t.Helper()

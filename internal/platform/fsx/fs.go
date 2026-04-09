@@ -11,6 +11,7 @@ type FS interface {
 	Stat(name string) (fs.FileInfo, error)
 	ReadDir(name string) ([]fs.DirEntry, error)
 	MkdirAll(path string, perm fs.FileMode) error
+	Remove(name string) error
 }
 
 type OSFS struct{}
@@ -34,3 +35,8 @@ func (OSFS) ReadDir(name string) ([]fs.DirEntry, error) {
 func (OSFS) MkdirAll(path string, perm fs.FileMode) error {
 	return os.MkdirAll(path, perm)
 }
+
+func (OSFS) Remove(name string) error {
+	return os.Remove(name)
+}
+

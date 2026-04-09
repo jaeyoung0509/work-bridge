@@ -18,7 +18,16 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 )
 
-var Version = "dev"
+// Version, Commit, and BuildDate are overridden at build time via -ldflags:
+//
+//	go build -ldflags "-X 'github.com/jaeyoung0509/work-bridge/internal/cli.Version=v0.1.5'"
+//
+// When built without ldflags (e.g. go run, go test) these default to "dev" / "unknown".
+var (
+	Version   = "dev"
+	Commit    = "unknown"
+	BuildDate = "unknown"
+)
 
 type Config struct {
 	ConfigFile     string   `mapstructure:"config"`
@@ -182,7 +191,8 @@ func (a *App) newRootCommand() *cobra.Command {
 	}
 
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.SetVersionTemplate("work-bridge {{.Version}}\n")
+	root.SetVersionTemplate("work-bridge {{.Version}} (" + Commit + ", built " + BuildDate + ")\n")
+
 
 	root.PersistentFlags().String("config", "", "Path to a work-bridge config file.")
 	root.PersistentFlags().String("format", "text", "Output format. One of: text, json.")
