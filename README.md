@@ -7,7 +7,7 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![npm](https://img.shields.io/npm/v/work-bridge?color=cb3837&logo=npm)](https://www.npmjs.com/package/work-bridge)
+[![npm](https://img.shields.io/npm/v/%40work-bridge%2Fwork-bridge?color=cb3837&logo=npm)](https://www.npmjs.com/package/@work-bridge/work-bridge)
 
 ---
 
@@ -42,14 +42,8 @@ Modern AI coding agents store their state in incompatible formats:
 ### Install via npm (recommended)
 
 ```bash
-npm install -g work-bridge
+npm install -g @work-bridge/work-bridge
 work-bridge
-```
-
-### Install via Homebrew
-
-```bash
-brew install jaeyoung0509/tap/work-bridge
 ```
 
 ### Install via Go

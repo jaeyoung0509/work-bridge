@@ -1,11 +1,11 @@
 {
-  "name": "work-bridge",
+  "name": "@work-bridge/work-bridge",
   "version": "0.1.0",
   "description": "Portable session migration CLI for Claude Code, Gemini CLI, OpenCode, and Codex CLI.",
   "homepage": "https://github.com/jaeyoung0509/work-bridge",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jaeyoung0509/work-bridge.git"
+    "url": "git+https://github.com/jaeyoung0509/work-bridge.git"
   },
   "bugs": {
     "url": "https://github.com/jaeyoung0509/work-bridge/issues"
@@ -28,6 +28,9 @@
   },
   "scripts": {
     "postinstall": "node scripts/install.cjs"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "files": [
     "bin/work-bridge.js",

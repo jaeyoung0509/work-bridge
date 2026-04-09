@@ -28,6 +28,9 @@ archives:
       - work-bridge
     format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
     format_overrides:
       - goos: windows
         format: zip
