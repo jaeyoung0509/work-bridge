@@ -67,6 +67,8 @@ func generatedArtifactsFor(target domain.Tool) []string {
 		return []string{"GEMINI.sessionport.md", "SETTINGS_PATCH.json", "STARTER_PROMPT.md"}
 	case domain.ToolClaude:
 		return []string{"CLAUDE.sessionport.md", "MEMORY_NOTE.md", "STARTER_PROMPT.md"}
+	case domain.ToolOpenCode:
+		return []string{"OPENCODE.sessionport.md", "CONFIG_HINTS.md", "STARTER_PROMPT.md"}
 	default:
 		return []string{}
 	}
@@ -80,6 +82,8 @@ func targetWarnings(target domain.Tool) []string {
 		return []string{"Gemini export will emit a settings patch suggestion rather than replacing the full local profile."}
 	case domain.ToolClaude:
 		return []string{"Claude export will convert portable context into CLAUDE.md supplements and plain memory notes."}
+	case domain.ToolOpenCode:
+		return []string{"OpenCode export will emit a portable supplement and config hints; provider state is not reconstructed."}
 	default:
 		return []string{}
 	}

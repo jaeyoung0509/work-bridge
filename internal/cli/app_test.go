@@ -29,9 +29,9 @@ func TestRunPrintsHelpByDefault(t *testing.T) {
 		t.Fatalf("expected empty stderr, got %q", stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"sessionport", "detect", "inspect", "doctor", "--config"} {
+	for _, want := range []string{"sessionport (headless)", "project:", "tools:"} {
 		if !strings.Contains(output, want) {
-			t.Fatalf("expected help output to contain %q, got %q", want, output)
+			t.Fatalf("expected headless output to contain %q, got %q", want, output)
 		}
 	}
 }

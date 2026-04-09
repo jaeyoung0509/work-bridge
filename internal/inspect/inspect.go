@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -122,6 +123,14 @@ func Run(opts Options) (Report, error) {
 		report.Notes = append(report.Notes, notes...)
 	case "claude":
 		sessions, notes, err := inspectClaude(opts)
+		if err != nil {
+			return Report{}, err
+		}
+		report.Sessions = sessions
+		report.TotalSessions = len(sessions)
+		report.Notes = append(report.Notes, notes...)
+	case "opencode":
+		sessions, notes, err := inspectOpenCode(opts)
 		if err != nil {
 			return Report{}, err
 		}
@@ -372,6 +381,208 @@ func inspectClaude(opts Options) ([]Session, []string, error) {
 	}
 
 	return sessions, notes, nil
+}
+
+func inspectOpenCode(opts Options) ([]Session, []string, error) {
+	opencodeDir := opts.ToolPaths.Dir(domain.ToolOpenCode, opts.HomeDir)
+	roots := []string{
+		filepath.Join(opencodeDir, "storage", "session"),
+		filepath.Join(opencodeDir, "project"),
+		filepath.Join(opts.HomeDir, ".config", "opencode"),
+	}
+
+	files := []string{}
+	for _, root := range roots {
+		candidates, err := listFilesRecursive(opts.FS, root)
+		if err != nil {
+			return nil, nil, err
+		}
+		files = append(files, candidates...)
+	}
+
+	sessions := []Session{}
+	seen := map[string]struct{}{}
+	unreadable := 0
+	unparsed := 0
+
+	for _, path := range files {
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".json" && ext != ".jsonl" && ext != ".jsonc" {
+			continue
+		}
+
+		data, err := opts.FS.ReadFile(path)
+		if err != nil {
+			unreadable++
+			continue
+		}
+
+		session, ok := parseOpenCodeSession(path, data)
+		if !ok {
+			unparsed++
+			continue
+		}
+		if session.ID == "" {
+			session.ID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		}
+		if _, exists := seen[session.ID]; exists {
+			continue
+		}
+		seen[session.ID] = struct{}{}
+		sessions = append(sessions, session)
+	}
+
+	sortSessions(sessions)
+
+	notes := []string{
+		"OpenCode sessions are discovered from ~/.local/share/opencode/storage/session and related project storage directories.",
+	}
+	if unreadable > 0 {
+		notes = append(notes, fmt.Sprintf("%d OpenCode session files could not be read.", unreadable))
+	}
+	if unparsed > 0 {
+		notes = append(notes, fmt.Sprintf("%d OpenCode files looked session-like but could not be parsed.", unparsed))
+	}
+	return sessions, notes, nil
+}
+
+func parseOpenCodeSession(path string, data []byte) (Session, bool) {
+	if strings.HasSuffix(strings.ToLower(path), ".jsonl") {
+		lines := splitLines(data)
+		for _, line := range lines {
+			session, ok := parseOpenCodeSessionJSON(path, line)
+			if ok {
+				return session, true
+			}
+		}
+		return Session{}, false
+	}
+	return parseOpenCodeSessionJSON(path, data)
+}
+
+func splitLines(data []byte) [][]byte {
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	scanner.Buffer(make([]byte, 0, 1024*1024), 8*1024*1024)
+	lines := [][]byte{}
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		lines = append(lines, append([]byte(nil), line...))
+	}
+	return lines
+}
+
+func parseOpenCodeSessionJSON(path string, data []byte) (Session, bool) {
+	cleaned := stripJSONCComments(data)
+	var raw map[string]any
+	if err := json.Unmarshal(cleaned, &raw); err != nil {
+		return Session{}, false
+	}
+
+	session := Session{
+		StoragePath: path,
+		ProjectRoot: stringField(raw, "projectRoot", "project_root", "cwd", "dir", "path"),
+	}
+	session.ID = stringField(raw, "id", "sessionId", "sessionID", "session_id")
+	session.Title = stringField(raw, "title", "display", "thread_name", "prompt", "name")
+	session.StartedAt = stringField(raw, "createdAt", "created_at", "startTime", "start_time", "startedAt", "started_at", "timestamp")
+	session.UpdatedAt = stringField(raw, "updatedAt", "updated_at", "lastUpdated", "last_updated", "modifiedAt", "modified_at")
+	if session.ProjectRoot == "" {
+		session.ProjectRoot = stringField(raw, "projectID", "projectId")
+	}
+	if session.Title == "" {
+		session.Title = summarizeOpenCodeTitle(raw)
+	}
+	if count := len(anySlice(raw, "messages", "events", "items")); count > 0 {
+		session.MessageCount = count
+	}
+	if session.ID == "" && session.Title == "" && session.ProjectRoot == "" {
+		return Session{}, false
+	}
+	return session, true
+}
+
+func summarizeOpenCodeTitle(raw map[string]any) string {
+	for _, key := range []string{"prompt", "summary", "display", "title"} {
+		if value := stringField(raw, key); value != "" {
+			return truncate(value)
+		}
+	}
+	return ""
+}
+
+func stringField(raw map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := raw[key]; ok {
+			if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func anySlice(raw map[string]any, keys ...string) []any {
+	for _, key := range keys {
+		value, ok := raw[key]
+		if !ok {
+			continue
+		}
+		if slice, ok := value.([]any); ok {
+			return slice
+		}
+	}
+	return nil
+}
+
+func stripJSONCComments(data []byte) []byte {
+	lines := splitLines(data)
+	if len(lines) == 0 {
+		return data
+	}
+	var b strings.Builder
+	inBlock := false
+	for _, line := range lines {
+		text := string(line)
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" {
+			continue
+		}
+		if inBlock {
+			if end := strings.Index(text, "*/"); end >= 0 {
+				inBlock = false
+				text = text[end+2:]
+			} else {
+				continue
+			}
+		}
+		for {
+			start := strings.Index(text, "/*")
+			if start < 0 {
+				break
+			}
+			end := strings.Index(text[start+2:], "*/")
+			if end < 0 {
+				text = text[:start]
+				inBlock = true
+				break
+			}
+			text = text[:start] + text[start+2+end+2:]
+		}
+		if idx := strings.Index(text, "//"); idx >= 0 {
+			text = text[:idx]
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		text = strings.TrimRight(text, ",")
+		b.WriteString(text)
+		b.WriteByte('\n')
+	}
+	return []byte(b.String())
 }
 
 func readCodexSessionMeta(fs fsx.FS, path string) (string, string, error) {

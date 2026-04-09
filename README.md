@@ -2,7 +2,7 @@
 
 Local-first CLI for importing coding-agent sessions, normalizing them into a portable working-state bundle, and rehydrating them for Claude Code, Gemini CLI, and Codex CLI.
 
-`sessionport` remains session-first. Skill/workspace portability and any Bubble Tea TUI are follow-on layers that build on this engine rather than replace it.
+`sessionport` is now TUI-first. The session portability engine still exists underneath, but the default entrypoint opens the Bubble Tea workspace directly.
 
 The CLI scaffold uses `cobra` for command routing and `viper` for config/env wiring so the command surface can grow without rebuilding flag parsing by hand.
 
@@ -10,13 +10,9 @@ The CLI scaffold uses `cobra` for command routing and `viper` for config/env wir
 
 This repository now has a working session portability core. The following commands are live today:
 
-- `detect`
-- `inspect <tool>`
-- `import --from codex|gemini|claude`
-- `doctor --from <tool> --target <tool>`
-- `export --bundle <file> --target <tool> --out <dir>`
-- `pack --from <tool> --session <id|latest> --out <file>`
-- `unpack --file <file> --target <tool> --out <dir>`
+- The TUI opens by default when you run `sessionport`.
+- Legacy compatibility commands remain available but hidden for automation and tests.
+- Supported tool adapters cover `codex`, `gemini`, `claude`, and `opencode`.
 
 Global flags already scaffolded:
 
@@ -61,7 +57,7 @@ docs/                  implementation and testing docs
 1. Expand fixture coverage for degraded/import-fidelity cases and keep doctor/export consistency locked.
 2. Continue enriching session import signals such as touched files, decisions, failures, and Claude transcript augmentation.
 3. Stabilize config-driven path overrides, output defaults, and redaction policy handling.
-4. Treat skill/workspace portability and Bubble Tea surfaces as phase-2 consumers of the session engine.
+4. Treat skill/workspace portability and Bubble Tea surfaces as first-class consumers of the session engine.
 
 ## Config
 

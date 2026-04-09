@@ -137,9 +137,10 @@ func (a *App) initConfig(cmd *cobra.Command) error {
 		Format:     a.viper.GetString("format"),
 		Verbose:    a.viper.GetBool("verbose"),
 		Paths: domain.ToolPaths{
-			Codex:  a.viper.GetString("paths.codex"),
-			Gemini: a.viper.GetString("paths.gemini"),
-			Claude: a.viper.GetString("paths.claude"),
+			Codex:    a.viper.GetString("paths.codex"),
+			Gemini:   a.viper.GetString("paths.gemini"),
+			Claude:   a.viper.GetString("paths.claude"),
+			OpenCode: a.viper.GetString("paths.opencode"),
 		},
 		Output: OutputConfig{
 			ImportBundlePath: a.viper.GetString("output.import_bundle_path"),
@@ -168,16 +169,14 @@ func (a *App) newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "sessionport",
 		Short:         "Portable working-state CLI for coding-agent sessions.",
-		Long:          "Normalize, import, and rehydrate coding-agent sessions across Claude Code, Gemini CLI, and Codex CLI.",
+		Long:          "TUI-first workspace for coding-agent portability across Claude Code, Gemini CLI, OpenCode, and Codex CLI.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       Version,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			return a.initConfig(cmd)
 		},
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
-		},
+		RunE: a.runRoot,
 	}
 
 	root.CompletionOptions.DisableDefaultCmd = true
@@ -201,104 +200,5 @@ func (a *App) newRootCommand() *cobra.Command {
 		a.newUnpackCommand(),
 		a.newVersionCommand(),
 	)
-
 	return root
-}
-
-func (a *App) newDetectCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "detect",
-		Short: "Detect local installations and project artifacts.",
-		Args:  cobra.NoArgs,
-		RunE:  a.runDetect,
-	}
-	return cmd
-}
-
-func (a *App) newInspectCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "inspect <tool>",
-		Short: "Inspect a tool's importable sessions and assets.",
-		Args:  cobra.ExactArgs(1),
-		RunE:  a.runInspect,
-	}
-	cmd.Flags().Int("limit", 20, "Maximum number of sessions to show.")
-	return cmd
-}
-
-func (a *App) newImportCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "import",
-		Short: "Import a session into the canonical bundle format.",
-		Args:  cobra.NoArgs,
-		RunE:  a.runImport,
-	}
-	cmd.Flags().String("from", "", "Source tool: codex, gemini, claude.")
-	cmd.Flags().String("session", "latest", "Source session identifier or latest.")
-	cmd.Flags().String("out", "", "Output path for bundle JSON.")
-	return cmd
-}
-
-func (a *App) newDoctorCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "doctor",
-		Short: "Report portability and compatibility for a target tool.",
-		Args:  cobra.NoArgs,
-		RunE:  a.runDoctor,
-	}
-	cmd.Flags().String("from", "", "Source tool: codex, gemini, claude.")
-	cmd.Flags().String("session", "latest", "Source session identifier or latest.")
-	cmd.Flags().String("target", "", "Target tool: codex, gemini, claude.")
-	return cmd
-}
-
-func (a *App) newExportCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "export",
-		Short: "Generate target-native starter artifacts from a bundle.",
-		Args:  cobra.NoArgs,
-		RunE:  a.runExport,
-	}
-	cmd.Flags().String("bundle", "", "Path to a canonical bundle JSON file.")
-	cmd.Flags().String("target", "", "Target tool: codex, gemini, claude.")
-	cmd.Flags().String("out", "", "Output directory for generated artifacts.")
-	return cmd
-}
-
-func (a *App) newPackCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "pack",
-		Short: "Package a canonical bundle as a portable .spkg archive.",
-		Args:  cobra.NoArgs,
-		RunE:  a.runPack,
-	}
-	cmd.Flags().String("from", "", "Source tool: codex, gemini, claude.")
-	cmd.Flags().String("session", "latest", "Source session identifier or latest.")
-	cmd.Flags().String("out", "", "Output path for the .spkg archive.")
-	return cmd
-}
-
-func (a *App) newUnpackCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "unpack",
-		Short: "Unpack a .spkg archive and prepare target artifacts.",
-		Args:  cobra.NoArgs,
-		RunE:  a.runUnpack,
-	}
-	cmd.Flags().String("file", "", "Path to a .spkg archive.")
-	cmd.Flags().String("target", "", "Target tool: codex, gemini, claude.")
-	cmd.Flags().String("out", "", "Output directory for unpacked contents.")
-	return cmd
-}
-
-func (a *App) newVersionCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
-		Short: "Print the build version.",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "sessionport %s\n", Version)
-			return err
-		},
-	}
 }

@@ -8,10 +8,11 @@ import (
 type Tool string
 
 const (
-	ToolCodex  Tool = "codex"
-	ToolGemini Tool = "gemini"
-	ToolClaude Tool = "claude"
-	BundleV0        = "v0"
+	ToolCodex    Tool = "codex"
+	ToolGemini   Tool = "gemini"
+	ToolClaude   Tool = "claude"
+	ToolOpenCode Tool = "opencode"
+	BundleV0          = "v0"
 )
 
 type SessionBundle struct {
@@ -133,7 +134,7 @@ func (b SessionBundle) Validate() error {
 
 func (t Tool) IsKnown() bool {
 	switch t {
-	case ToolCodex, ToolGemini, ToolClaude:
+	case ToolCodex, ToolGemini, ToolClaude, ToolOpenCode:
 		return true
 	default:
 		return false

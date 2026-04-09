@@ -68,6 +68,7 @@ func Run(opts Options) (Report, error) {
 			detectCodex(opts, ancestors),
 			detectGemini(opts, projectRoot, ancestors),
 			detectClaude(opts, projectRoot, ancestors),
+			detectOpenCode(opts, projectRoot, ancestors),
 		},
 	}
 
@@ -130,6 +131,28 @@ func detectClaude(opts Options, projectRoot string, ancestors []string) ToolRepo
 
 	return newToolReport("claude", "claude", opts.LookPath, artifacts, []string{
 		"Detects documented CLAUDE.md and settings.json locations. Managed settings and MCP config files are not included yet.",
+	})
+}
+
+func detectOpenCode(opts Options, projectRoot string, ancestors []string) ToolReport {
+	opencodeDir := opts.ToolPaths.Dir(domain.ToolOpenCode, opts.HomeDir)
+	artifacts := []ArtifactProbe{
+		probeFile(opts.FS, "opencode.jsonc", "config", "user", filepath.Join(opts.HomeDir, ".config", "opencode", "opencode.jsonc")),
+		probeFile(opts.FS, "opencode.json", "config", "user", filepath.Join(opts.HomeDir, ".config", "opencode", "opencode.json")),
+		probeFile(opts.FS, "opencode.jsonc", "config", "legacy", filepath.Join(opencodeDir, "opencode.jsonc")),
+		probeFile(opts.FS, "opencode.json", "config", "legacy", filepath.Join(opencodeDir, "opencode.json")),
+		probeFile(opts.FS, "storage", "session", "user", filepath.Join(opencodeDir, "storage")),
+		probeFile(opts.FS, "storage", "session", "project", filepath.Join(projectRoot, ".opencode", "storage")),
+	}
+
+	for _, dir := range ancestors {
+		artifacts = append(artifacts,
+			probeFile(opts.FS, "SKILL.md", "instruction", "project", filepath.Join(dir, ".github", "skills", "SKILL.md")),
+		)
+	}
+
+	return newToolReport("opencode", "opencode", opts.LookPath, artifacts, []string{
+		"Detects OpenCode config and storage directories in ~/.config/opencode and ~/.local/share/opencode.",
 	})
 }
 

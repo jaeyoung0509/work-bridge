@@ -1,0 +1,22 @@
+{
+  "name": "sessionport",
+  "version": "0.0.0",
+  "description": "Install the sessionport CLI from GitHub Releases.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jaeyoung0509/work-bridge.git"
+  },
+  "bin": {
+    "sessionport": "./bin/sessionport.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.cjs"
+  },
+  "files": [
+    "bin/sessionport.js",
+    "scripts/install.cjs"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
