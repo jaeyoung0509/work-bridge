@@ -73,12 +73,7 @@ func (a *projectAdapter) applyNativeClaude(payload domain.SwitchPayload, plan do
 	report.FilesUpdated = append(report.FilesUpdated, historyPath)
 
 	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
-
-	// Apply global skills and MCP
-	report, _ = a.applyGlobalSkills(payload, report)
-	report, _ = a.applyGlobalMCP(payload, report)
-
-	return report, nil
+	return a.applyNativeGlobalArtifacts(payload, report)
 }
 
 // exportNativeClaude exports the imported session natively to the Claude storage layout.

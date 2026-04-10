@@ -74,12 +74,7 @@ func (a *projectAdapter) applyNativeCodex(payload domain.SwitchPayload, plan dom
 	report.FilesUpdated = append(report.FilesUpdated, indexPath)
 
 	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
-
-	// Apply global skills and MCP
-	report, _ = a.applyGlobalSkills(payload, report)
-	report, _ = a.applyGlobalMCP(payload, report)
-
-	return report, nil
+	return a.applyNativeGlobalArtifacts(payload, report)
 }
 
 // exportNativeCodex exports the imported session natively to the Codex storage layout.

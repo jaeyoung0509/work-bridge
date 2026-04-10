@@ -1,7 +1,10 @@
 package switcher
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
 
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
 )
@@ -75,30 +78,33 @@ func (a *projectAdapter) applyGlobalSkills(payload domain.SwitchPayload, report 
 		report.Warnings = append(report.Warnings, fmt.Sprintf("Global skills not supported for %s", a.target))
 		return report, nil
 	}
+	if err := a.fs.MkdirAll(targetSkillDir, 0o755); err != nil {
+		return report, fmt.Errorf("create global skill directory %s: %w", targetSkillDir, err)
+	}
 
 	installed := 0
+	used := map[string]int{}
 	for _, skill := range globalSkills {
 		slug := sanitizeSkillName(skill.Name)
 		if slug == "" {
 			slug = "skill"
 		}
-		targetPath := fmt.Sprintf("%s/%s.md", targetSkillDir, slug)
+		used[slug]++
+		if used[slug] > 1 {
+			slug = fmt.Sprintf("%s-%d", slug, used[slug])
+		}
+		targetPath := filepath.Join(targetSkillDir, slug+".md")
 
 		// Check if file already exists
-		if _, err := a.fs.ReadFile(targetPath); err == nil {
+		if _, err := a.fs.Stat(targetPath); err == nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("Skill %q already exists at %s, skipping", skill.Name, targetPath))
 			continue
-		}
-
-		// Write skill file
-		if err := a.fs.MkdirAll(targetSkillDir, 0o755); err != nil {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("Failed to create skill directory: %v", err))
-			continue
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return report, fmt.Errorf("stat global skill %s: %w", targetPath, err)
 		}
 
 		if err := a.fs.WriteFile(targetPath, []byte(skill.Content), 0o644); err != nil {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("Failed to write skill %s: %v", skill.Name, err))
-			continue
+			return report, fmt.Errorf("write global skill %s: %w", targetPath, err)
 		}
 
 		report.FilesUpdated = append(report.FilesUpdated, targetPath)
@@ -109,6 +115,8 @@ func (a *projectAdapter) applyGlobalSkills(payload domain.SwitchPayload, report 
 		report.Warnings = append(report.Warnings, fmt.Sprintf("Installed %d global skill(s) to %s", installed, a.target))
 	}
 
+	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
+	report.Warnings = dedupeStrings(report.Warnings)
 	return report, nil
 }
 
@@ -116,7 +124,7 @@ func (a *projectAdapter) applyGlobalSkills(payload domain.SwitchPayload, report 
 // Note: Full global MCP migration requires tool-specific config format handling.
 // This is currently limited to warnings; manual migration recommended.
 func (a *projectAdapter) applyGlobalMCP(payload domain.SwitchPayload, report domain.ApplyReport) (domain.ApplyReport, error) {
-	if len(payload.MCP.Servers) == 0 {
+	if len(payload.MCP.Sources) == 0 {
 		return report, nil
 	}
 
@@ -134,6 +142,25 @@ func (a *projectAdapter) applyGlobalMCP(payload domain.SwitchPayload, report dom
 				globalCount, a.target))
 	}
 
+	report.Warnings = dedupeStrings(report.Warnings)
+	return report, nil
+}
+
+func (a *projectAdapter) applyNativeGlobalArtifacts(payload domain.SwitchPayload, report domain.ApplyReport) (domain.ApplyReport, error) {
+	var err error
+	report, err = a.applyGlobalSkills(payload, report)
+	if err != nil {
+		return report, err
+	}
+	report, err = a.applyGlobalMCP(payload, report)
+	if err != nil {
+		return report, err
+	}
+	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
+	report.Warnings = dedupeStrings(report.Warnings)
+	if len(report.Warnings) > 0 && report.Status == domain.SwitchStateApplied {
+		report.Status = domain.SwitchStatePartial
+	}
 	return report, nil
 }
 
@@ -142,11 +169,11 @@ func (a *projectAdapter) applyGlobalMCP(payload domain.SwitchPayload, report dom
 func (a *projectAdapter) globalSkillDir() string {
 	switch a.target {
 	case domain.ToolCodex:
-		return fmt.Sprintf("%s/skills", a.toolPaths.Dir(domain.ToolCodex, a.homeDir))
+		return filepath.Join(a.toolPaths.Dir(domain.ToolCodex, a.homeDir), "skills")
 	case domain.ToolClaude:
-		return fmt.Sprintf("%s/skills", a.toolPaths.Dir(domain.ToolClaude, a.homeDir))
+		return filepath.Join(a.toolPaths.Dir(domain.ToolClaude, a.homeDir), "skills")
 	case domain.ToolOpenCode:
-		return fmt.Sprintf("%s/.config/opencode/skills", a.homeDir)
+		return filepath.Join(a.homeDir, ".config", "opencode", "skills")
 	default:
 		// Gemini doesn't have a standard user-scope skill directory
 		return ""

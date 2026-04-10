@@ -94,12 +94,7 @@ func (a *projectAdapter) applyNativeGemini(payload domain.SwitchPayload, plan do
 	report.Session.Files = append(report.Session.Files, chatPath)
 
 	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
-
-	// Apply global skills and MCP
-	report, _ = a.applyGlobalSkills(payload, report)
-	report, _ = a.applyGlobalMCP(payload, report)
-
-	return report, nil
+	return a.applyNativeGlobalArtifacts(payload, report)
 }
 
 // exportNativeGemini exports the imported session natively to the Gemini storage layout.

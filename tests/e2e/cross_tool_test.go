@@ -5,9 +5,9 @@
 //
 // Usage:
 //
-//	go test -tags=e2e ./tests/e2e/... -v
+//	WORKBRIDGE_E2E=1 go test -tags=e2e ./tests/e2e/... -v
 //
-// To skip in CI, these tests require the WORKBRIDGE_E2E environment variable to be set.
+// Or run `make test-e2e`.
 package e2e
 
 import (
@@ -20,37 +20,9 @@ import (
 	"testing"
 )
 
-// skipIfNotE2E skips the test unless WORKBRIDGE_E2E is set.
-// This prevents E2E tests from running in CI.
-func skipIfNotE2E(t *testing.T) {
-	if os.Getenv("WORKBRIDGE_E2E") == "" {
-		t.Skip("skipping E2E test: set WORKBRIDGE_E2E=1 to run")
-	}
-}
-
-// buildWorkBridge builds the work-bridge binary for testing.
-func buildWorkBridge(t *testing.T) string {
-	t.Helper()
-
-	tmpDir := t.TempDir()
-	binaryPath := filepath.Join(tmpDir, "work-bridge")
-
-	// Get the project root (3 levels up from this file)
-	projectRoot := "../.."
-
-	cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/work-bridge")
-	cmd.Dir = projectRoot
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("failed to build work-bridge: %v\n%s", err, output)
-	}
-
-	return binaryPath
-}
-
 // TestCrossToolSessionMigration tests session import between different tools.
 func TestCrossToolSessionMigration(t *testing.T) {
-	skipIfNotE2E(t)
+	skipIfE2EDisabled(t)
 
 	binary := buildWorkBridge(t)
 	tmpDir := t.TempDir()
@@ -63,9 +35,7 @@ func TestCrossToolSessionMigration(t *testing.T) {
 	}
 
 	// Initialize git repo (required for some tools)
-	cmd := exec.Command("git", "init")
-	cmd.Dir = projectRoot
-	cmd.Run()
+	initGitRepo(t, projectRoot)
 
 	toolPairs := []struct {
 		from string
@@ -125,7 +95,7 @@ func testSessionSwitch(t *testing.T, binary, projectRoot, from, to string) {
 
 // TestNativeModeMigration tests native mode session migration.
 func TestNativeModeMigration(t *testing.T) {
-	skipIfNotE2E(t)
+	skipIfE2EDisabled(t)
 
 	binary := buildWorkBridge(t)
 	tmpDir := t.TempDir()
@@ -138,9 +108,7 @@ func TestNativeModeMigration(t *testing.T) {
 	}
 
 	// Initialize git repo
-	cmd := exec.Command("git", "init")
-	cmd.Dir = projectRoot
-	cmd.Run()
+	initGitRepo(t, projectRoot)
 
 	// Test native mode for each tool pair
 	nativePairs := []struct {
@@ -196,9 +164,8 @@ func testNativeSwitch(t *testing.T, binary, projectRoot, from, to string) {
 
 // TestGlobalSkillsMigration tests migration of global/user-scope skills.
 func TestGlobalSkillsMigration(t *testing.T) {
-	skipIfNotE2E(t)
+	skipIfE2EDisabled(t)
 
-	binary := buildWorkBridge(t)
 	tmpDir := t.TempDir()
 
 	// Create fake global skills directories
@@ -257,7 +224,7 @@ This is a test skill for E2E validation of global skill migration.
 
 // TestNativeExportImportCycle tests export and import cycle for session preservation.
 func TestNativeExportImportCycle(t *testing.T) {
-	skipIfNotE2E(t)
+	skipIfE2EDisabled(t)
 
 	binary := buildWorkBridge(t)
 	tmpDir := t.TempDir()
@@ -275,9 +242,7 @@ func TestNativeExportImportCycle(t *testing.T) {
 	}
 
 	// Initialize git repo
-	cmd := exec.Command("git", "init")
-	cmd.Dir = projectRoot
-	cmd.Run()
+	initGitRepo(t, projectRoot)
 
 	// Test export in native mode for each tool
 	tools := []string{"codex", "gemini", "claude"}
@@ -330,7 +295,7 @@ func testExportCycle(t *testing.T, binary, projectRoot, exportDir, from, to stri
 
 // TestJSONOutputFormat tests that JSON output format works correctly.
 func TestJSONOutputFormat(t *testing.T) {
-	skipIfNotE2E(t)
+	skipIfE2EDisabled(t)
 
 	binary := buildWorkBridge(t)
 	tmpDir := t.TempDir()
@@ -342,19 +307,17 @@ func TestJSONOutputFormat(t *testing.T) {
 	}
 
 	// Initialize git repo
-	cmd := exec.Command("git", "init")
-	cmd.Dir = projectRoot
-	cmd.Run()
+	initGitRepo(t, projectRoot)
 
-	cmd = exec.Command(binary, "switch",
+	cmd := exec.Command(binary, "switch",
 		"--from", "codex",
 		"--session", "latest",
 		"--to", "claude",
 		"--project", projectRoot,
+		"--format", "json",
 		"--mode", "project",
 		"--dry-run",
 	)
-	cmd.Env = append(os.Environ(), "WORKBRIDGE_FORMAT=json")
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {

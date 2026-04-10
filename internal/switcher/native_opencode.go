@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/pathpatch"
 )
+
+const openCodePayloadVersion = "1.3.10"
 
 // previewNativeOpenCode provides a plan for OpenCode native mode.
 func (a *projectAdapter) previewNativeOpenCode(payload domain.SwitchPayload, projectRoot string, destinationOverride string) (domain.SwitchPlan, error) {
@@ -60,12 +63,7 @@ func (a *projectAdapter) applyNativeOpenCode(payload domain.SwitchPayload, plan 
 	}
 
 	report.Warnings = append(report.Warnings, "OpenCode session applied via CLI delegate.")
-
-	// Apply global skills and MCP
-	report, _ = a.applyGlobalSkills(payload, report)
-	report, _ = a.applyGlobalMCP(payload, report)
-
-	return report, nil
+	return a.applyNativeGlobalArtifacts(payload, report)
 }
 
 // exportNativeOpenCode writes the opencode export-compatible payload natively.
@@ -114,6 +112,9 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 	if sessionID == "" {
 		sessionID = fmt.Sprintf("imported-%s", now.Format("20060102150405"))
 	}
+	title := pathpatchOpenCodeText(bundle.TaskTitle, bundle.ProjectRoot, projectRoot)
+	currentGoal := pathpatchOpenCodeText(bundle.CurrentGoal, bundle.ProjectRoot, projectRoot)
+	summary := pathpatchOpenCodeText(bundle.Summary, bundle.ProjectRoot, projectRoot)
 
 	// Build info block matching opencode export schema
 	info := map[string]any{
@@ -121,8 +122,8 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 		"slug":      "imported-session",
 		"projectID": "imported",
 		"directory": projectRoot,
-		"title":     bundle.TaskTitle,
-		"version":   "1.3.10",
+		"title":     title,
+		"version":   openCodePayloadVersion,
 		"summary": map[string]any{
 			"additions": 0,
 			"deletions": 0,
@@ -138,7 +139,7 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 	var messages []map[string]any
 
 	// User message with current goal
-	if bundle.CurrentGoal != "" {
+	if currentGoal != "" {
 		msg := map[string]any{
 			"info": map[string]any{
 				"role":      "user",
@@ -150,7 +151,7 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 			"parts": []map[string]any{
 				{
 					"type": "text",
-					"text": bundle.CurrentGoal,
+					"text": currentGoal,
 					"id":   fmt.Sprintf("prt-user-%s", sessionID),
 				},
 			},
@@ -159,7 +160,7 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 	}
 
 	// Assistant message with summary
-	if bundle.Summary != "" {
+	if summary != "" {
 		msg := map[string]any{
 			"info": map[string]any{
 				"role":  "assistant",
@@ -175,7 +176,7 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 			"parts": []map[string]any{
 				{
 					"type": "text",
-					"text": bundle.Summary,
+					"text": summary,
 					"id":   fmt.Sprintf("prt-assistant-%s", sessionID),
 				},
 			},
@@ -191,7 +192,7 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 					"id":   fmt.Sprintf("prt-tool-%d-%s", i, sessionID),
 				}
 				if event.Summary != "" {
-					toolPart["output"] = event.Summary
+					toolPart["output"] = pathpatchOpenCodeText(event.Summary, bundle.ProjectRoot, projectRoot)
 				}
 				if event.Status != "" {
 					toolPart["status"] = event.Status
@@ -234,4 +235,11 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 // This is identical to import payload but used for out-of-project export.
 func buildOpenCodeExportPayload(bundle domain.SessionBundle, projectRoot string, now time.Time) map[string]any {
 	return buildOpenCodeImportPayload(bundle, projectRoot, now)
+}
+
+func pathpatchOpenCodeText(value, srcPath, dstPath string) string {
+	if value == "" || srcPath == "" || srcPath == dstPath {
+		return value
+	}
+	return pathpatch.ReplacePathsInText(value, srcPath, dstPath)
 }

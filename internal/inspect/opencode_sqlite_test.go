@@ -167,3 +167,83 @@ func TestInspectOpenCodeSQLite(t *testing.T) {
 	t.Logf("Found %d sessions", len(sessions))
 	t.Logf("Notes: %v", notes)
 }
+
+func TestInspectOpenCodeSQLiteTimeUpdatedFallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	opencodeDBDir := filepath.Join(tmpDir, ".local", "share", "opencode")
+	err := os.MkdirAll(opencodeDBDir, 0o755)
+	if err != nil {
+		t.Fatalf("failed to create test db dir: %v", err)
+	}
+
+	dbPath := filepath.Join(opencodeDBDir, "opencode.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	defer db.Close()
+
+	schema := `
+		CREATE TABLE IF NOT EXISTS project (
+			id TEXT PRIMARY KEY,
+			path TEXT NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS workspace (
+			id TEXT PRIMARY KEY,
+			projectId TEXT NOT NULL,
+			path TEXT NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS session (
+			id TEXT PRIMARY KEY,
+			projectId TEXT NOT NULL,
+			workspaceId TEXT,
+			title TEXT NOT NULL,
+			time_updated INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS message (
+			id TEXT PRIMARY KEY,
+			sessionId TEXT NOT NULL,
+			text TEXT
+		);
+	`
+
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO project (id, path) VALUES ('proj_legacy', '/Users/testuser/project-legacy');
+		INSERT INTO workspace (id, projectId, path) VALUES ('ws_legacy', 'proj_legacy', '/Users/testuser/project-legacy');
+		INSERT INTO session (id, projectId, workspaceId, title, time_updated)
+		VALUES ('ses_legacy', 'proj_legacy', 'ws_legacy', 'Legacy Session', 1712000400000);
+		INSERT INTO message (id, sessionId, text) VALUES ('msg_legacy', 'ses_legacy', 'Legacy message');
+	`); err != nil {
+		t.Fatalf("failed to insert legacy test data: %v", err)
+	}
+
+	opts := Options{
+		HomeDir:   tmpDir,
+		ToolPaths: domain.ToolPaths{},
+	}
+
+	sessions, _, err := inspectOpenCode(opts)
+	if err != nil {
+		t.Fatalf("inspectOpenCode failed: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+	if sessions[0].ID != "ses_legacy" {
+		t.Fatalf("expected legacy session id, got %q", sessions[0].ID)
+	}
+	if sessions[0].ProjectRoot != "/Users/testuser/project-legacy" {
+		t.Fatalf("expected legacy project root, got %q", sessions[0].ProjectRoot)
+	}
+	if sessions[0].UpdatedAt != "1712000400000" {
+		t.Fatalf("expected time_updated fallback, got %q", sessions[0].UpdatedAt)
+	}
+	if sessions[0].MessageCount != 1 {
+		t.Fatalf("expected message count 1, got %d", sessions[0].MessageCount)
+	}
+}

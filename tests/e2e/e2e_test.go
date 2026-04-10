@@ -2,7 +2,7 @@
 // These tests build the binary and run CLI commands to verify real behavior.
 // They are designed to run locally only, NOT in CI.
 //
-// To run: go test -tags=e2e ./tests/e2e/... -v
+// To run: WORKBRIDGE_E2E=1 go test -tags=e2e ./tests/e2e/... -v
 // Or: make test-e2e
 
 //go:build e2e
@@ -18,53 +18,6 @@ import (
 	"testing"
 )
 
-// skipIfCI skips the test if running in a CI environment
-func skipIfCI(t *testing.T) {
-	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
-		t.Skip("Skipping E2E test in CI environment")
-	}
-}
-
-// buildBinary builds the work-bridge binary and returns the binary path
-func buildBinary(t *testing.T) string {
-	t.Helper()
-
-	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "work-bridge")
-
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/work-bridge")
-	cmd.Dir = filepath.Join(t.TempDir(), "..", "..") // Project root
-	cmd.Dir = getProjectRoot(t)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Failed to build binary: %v\nOutput: %s", err, string(output))
-	}
-
-	return binPath
-}
-
-func getProjectRoot(t *testing.T) string {
-	t.Helper()
-
-	// Start from current file's directory and walk up to find go.mod
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get working directory: %v", err)
-	}
-
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("Could not find project root (go.mod)")
-		}
-		dir = parent
-	}
-}
-
 func runCommand(t *testing.T, binPath string, args ...string) (string, string, error) {
 	t.Helper()
 
@@ -78,10 +31,10 @@ func runCommand(t *testing.T, binPath string, args ...string) (string, string, e
 }
 
 func TestE2E_CrossToolSessionMigration(t *testing.T) {
-	skipIfCI(t)
+	skipIfE2EDisabled(t)
 	t.Parallel()
 
-	binPath := buildBinary(t)
+	binPath := buildWorkBridge(t)
 	tmpDir := t.TempDir()
 	projectRoot := filepath.Join(tmpDir, "test-project")
 	err := os.MkdirAll(projectRoot, 0o755)
@@ -166,10 +119,10 @@ func TestE2E_CrossToolSessionMigration(t *testing.T) {
 }
 
 func TestE2E_GlobalSkillsMigration(t *testing.T) {
-	skipIfCI(t)
+	skipIfE2EDisabled(t)
 	t.Parallel()
 
-	binPath := buildBinary(t)
+	binPath := buildWorkBridge(t)
 	tmpDir := t.TempDir()
 
 	// Setup source tool's user-scope skill directory
@@ -222,10 +175,10 @@ This is a test skill content.
 }
 
 func TestE2E_GlobalMCPWarning(t *testing.T) {
-	skipIfCI(t)
+	skipIfE2EDisabled(t)
 	t.Parallel()
 
-	binPath := buildBinary(t)
+	binPath := buildWorkBridge(t)
 	tmpDir := t.TempDir()
 
 	// Create a dummy project
@@ -258,10 +211,10 @@ func TestE2E_GlobalMCPWarning(t *testing.T) {
 }
 
 func TestE2E_ExportNativeMode(t *testing.T) {
-	skipIfCI(t)
+	skipIfE2EDisabled(t)
 	t.Parallel()
 
-	binPath := buildBinary(t)
+	binPath := buildWorkBridge(t)
 	tmpDir := t.TempDir()
 
 	// Create export target directory
@@ -317,10 +270,10 @@ func TestE2E_ExportNativeMode(t *testing.T) {
 }
 
 func TestE2E_BinarySmoke(t *testing.T) {
-	skipIfCI(t)
+	skipIfE2EDisabled(t)
 	t.Parallel()
 
-	binPath := buildBinary(t)
+	binPath := buildWorkBridge(t)
 
 	// Test basic commands work
 	t.Run("version", func(t *testing.T) {
@@ -382,13 +335,13 @@ func TestE2E_BinarySmoke(t *testing.T) {
 }
 
 func TestE2E_ValidateOpenCodePayloadFormat(t *testing.T) {
-	skipIfCI(t)
+	skipIfE2EDisabled(t)
 	t.Parallel()
 
 	// This test validates that our OpenCode payload format matches
 	// the actual `opencode export` output structure
 
-	binPath := buildBinary(t)
+	binPath := buildWorkBridge(t)
 	tmpDir := t.TempDir()
 
 	projectRoot := filepath.Join(tmpDir, "test-project")
@@ -423,10 +376,10 @@ func TestE2E_ValidateOpenCodePayloadFormat(t *testing.T) {
 
 // TestE2E_ModeFlagValidation validates that --mode flag works correctly
 func TestE2E_ModeFlagValidation(t *testing.T) {
-	skipIfCI(t)
+	skipIfE2EDisabled(t)
 	t.Parallel()
 
-	binPath := buildBinary(t)
+	binPath := buildWorkBridge(t)
 	tmpDir := t.TempDir()
 	projectRoot := filepath.Join(tmpDir, "test-project")
 	err := os.MkdirAll(projectRoot, 0o755)

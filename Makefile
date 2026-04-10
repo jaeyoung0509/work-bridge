@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt tidy run release
+.PHONY: build test lint fmt tidy run release test-e2e
 
 # Version is injected via -ldflags at build time.
 # Falls back to "dev" when built without the flag (e.g. go run or go test).
@@ -33,8 +33,12 @@ tidy:
 test-e2e:
 	@echo "Running E2E tests (local only)..."
 	@echo "These tests build the binary and test real CLI behavior."
-	@echo "Skip if CI=true or GITHUB_ACTIONS=true"
-	go test -tags=e2e ./tests/e2e/... -v
+	@echo "Skipping automatically when CI=true or GITHUB_ACTIONS=true"
+	@if [ -z "$$CI" ] && [ -z "$$GITHUB_ACTIONS" ]; then \
+		WORKBRIDGE_E2E=1 go test -tags=e2e ./tests/e2e/... -v; \
+	else \
+		echo "Skipping E2E tests in CI environment."; \
+	fi
 
 # Create a release binary for the current VERSION.
 # Usage: make release VERSION=v0.1.5
