@@ -35,8 +35,11 @@ func buildWorkBridge(t *testing.T) string {
 	tmpDir := t.TempDir()
 	binaryPath := filepath.Join(tmpDir, "work-bridge")
 
-	cmd := exec.Command("go", "build", "-o", binaryPath, "../../cmd/work-bridge")
-	cmd.Dir = "../.."
+	// Get the project root (3 levels up from this file)
+	projectRoot := "../.."
+
+	cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/work-bridge")
+	cmd.Dir = projectRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("failed to build work-bridge: %v\n%s", err, output)
