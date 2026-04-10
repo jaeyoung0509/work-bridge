@@ -68,29 +68,38 @@ func StringField(raw map[string]any, keys ...string) string {
 }
 
 // SanitizeName converts a string into a filesystem-safe slug containing only
-// lowercase alphanumeric characters and hyphens.
+// lowercase alphanumeric characters and single hyphens.
 func SanitizeName(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
 	}
 	var b strings.Builder
+	b.Grow(len(value))
+	lastWasHyphen := false
 	for _, r := range value {
 		switch {
 		case r >= 'a' && r <= 'z':
 			b.WriteRune(r)
+			lastWasHyphen = false
 		case r >= 'A' && r <= 'Z':
 			b.WriteRune(r + ('a' - 'A'))
+			lastWasHyphen = false
 		case r >= '0' && r <= '9':
 			b.WriteRune(r)
+			lastWasHyphen = false
 		default:
-			b.WriteByte('-')
+			if !lastWasHyphen {
+				b.WriteByte('-')
+				lastWasHyphen = true
+			}
 		}
 	}
 	return strings.Trim(b.String(), "-")
 }
 
-// StripJSONCComments removes // and /* */ comments from JSONC data.
+// StripJSONCComments removes // and /* */ comments from JSONC data, correctly
+// ignoring comment markers that appear inside string literals.
 func StripJSONCComments(data []byte) []byte {
 	lines := splitLines(data)
 	if len(lines) == 0 {
@@ -98,12 +107,10 @@ func StripJSONCComments(data []byte) []byte {
 	}
 	var b strings.Builder
 	inBlock := false
+	insideString := false
+
 	for _, line := range lines {
 		text := string(line)
-		trimmed := strings.TrimSpace(text)
-		if trimmed == "" {
-			continue
-		}
 		if inBlock {
 			if end := strings.Index(text, "*/"); end >= 0 {
 				inBlock = false
@@ -112,23 +119,43 @@ func StripJSONCComments(data []byte) []byte {
 				continue
 			}
 		}
-		for {
-			start := strings.Index(text, "/*")
-			if start < 0 {
-				break
+		
+		var result strings.Builder
+		for i := 0; i < len(text); i++ {
+			ch := text[i]
+			if insideString {
+				result.WriteByte(ch)
+				if ch == '\\' {
+					i++ // skip escaped char
+					if i < len(text) {
+						result.WriteByte(text[i])
+					}
+				} else if ch == '"' {
+					insideString = false
+				}
+			} else {
+				if ch == '"' {
+					insideString = true
+					result.WriteByte(ch)
+				} else if ch == '/' && i+1 < len(text) {
+					next := text[i+1]
+					if next == '/' {
+						// single line comment: ignore rest of line
+						break 
+					} else if next == '*' {
+						// block comment start
+						inBlock = true
+						i++ // skip *
+						break
+					} else {
+						result.WriteByte(ch)
+					}
+				} else {
+					result.WriteByte(ch)
+				}
 			}
-			end := strings.Index(text[start+2:], "*/")
-			if end < 0 {
-				text = text[:start]
-				inBlock = true
-				break
-			}
-			text = text[:start] + text[start+2+end+2:]
 		}
-		if idx := strings.Index(text, "//"); idx >= 0 {
-			text = text[:idx]
-		}
-		text = strings.TrimSpace(text)
+		text = strings.TrimSpace(result.String())
 		if text == "" {
 			continue
 		}
