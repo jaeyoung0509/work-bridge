@@ -1,6 +1,7 @@
 package switcher
 
 import (
+	"crypto/sha1"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -13,6 +14,13 @@ import (
 )
 
 const openCodePayloadVersion = "1.3.10"
+
+const (
+	openCodeDefaultProviderID = "opencode"
+	openCodeDefaultModelID    = "minimax-m2.5-free"
+	openCodeDefaultAgent      = "build"
+	openCodeDefaultMode       = "build"
+)
 
 // previewNativeOpenCode provides a plan for OpenCode native mode.
 func (a *projectAdapter) previewNativeOpenCode(payload domain.SwitchPayload, projectRoot string, destinationOverride string) (domain.SwitchPlan, error) {
@@ -96,7 +104,8 @@ func (a *projectAdapter) exportNativeOpenCode(payload domain.SwitchPayload, plan
 }
 
 // buildOpenCodeImportPayload creates an opencode import-compatible payload from a SessionBundle.
-// Format matches `opencode export <sessionID>` output:
+// The payload stays close to `opencode export <sessionID>` output while
+// including compatibility fields that the import validator requires.
 //
 //	{
 //	  "info": { ... },
@@ -108,19 +117,23 @@ func (a *projectAdapter) exportNativeOpenCode(payload domain.SwitchPayload, plan
 //	  ]
 //	}
 func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string, now time.Time) map[string]any {
-	sessionID := bundle.SourceSessionID
-	if sessionID == "" {
-		sessionID = fmt.Sprintf("imported-%s", now.Format("20060102150405"))
-	}
+	sessionID := openCodeSessionID(bundle.SourceSessionID, now)
 	title := pathpatchOpenCodeText(bundle.TaskTitle, bundle.ProjectRoot, projectRoot)
 	currentGoal := pathpatchOpenCodeText(bundle.CurrentGoal, bundle.ProjectRoot, projectRoot)
 	summary := pathpatchOpenCodeText(bundle.Summary, bundle.ProjectRoot, projectRoot)
+	model := map[string]any{
+		"providerID": openCodeDefaultProviderID,
+		"modelID":    openCodeDefaultModelID,
+	}
+	userMessageID := openCodeObjectID("msg", sessionID, "user")
+	assistantMessageID := openCodeObjectID("msg", sessionID, "assistant")
+	defaultMessageID := openCodeObjectID("msg", sessionID, "default")
 
 	// Build info block matching opencode export schema
 	info := map[string]any{
 		"id":        sessionID,
-		"slug":      "imported-session",
-		"projectID": "imported",
+		"slug":      "",
+		"projectID": "global",
 		"directory": projectRoot,
 		"title":     title,
 		"version":   openCodePayloadVersion,
@@ -144,15 +157,21 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 			"info": map[string]any{
 				"role":      "user",
 				"time":      map[string]any{"created": now.UnixMilli()},
-				"agent":     "build",
-				"id":        fmt.Sprintf("msg-user-%s", sessionID),
+				"agent":     openCodeDefaultAgent,
+				"model":     model,
+				"summary":   map[string]any{"diffs": []any{}},
+				"id":        userMessageID,
 				"sessionID": sessionID,
 			},
 			"parts": []map[string]any{
 				{
-					"type": "text",
-					"text": currentGoal,
-					"id":   fmt.Sprintf("prt-user-%s", sessionID),
+					"type":      "text",
+					"text":      currentGoal,
+					"synthetic": false,
+					"time":      map[string]any{"start": 0, "end": 0},
+					"id":        openCodeObjectID("prt", sessionID, "user-text"),
+					"sessionID": sessionID,
+					"messageID": userMessageID,
 				},
 			},
 		}
@@ -161,46 +180,52 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 
 	// Assistant message with summary
 	if summary != "" {
+		parts := []map[string]any{
+			{
+				"type":      "step-start",
+				"id":        openCodeObjectID("prt", sessionID, "assistant-step-start"),
+				"sessionID": sessionID,
+				"messageID": assistantMessageID,
+			},
+			{
+				"type":      "text",
+				"text":      summary,
+				"time":      map[string]any{"start": now.UnixMilli(), "end": now.UnixMilli()},
+				"id":        openCodeObjectID("prt", sessionID, "assistant-text"),
+				"sessionID": sessionID,
+				"messageID": assistantMessageID,
+			},
+		}
 		msg := map[string]any{
 			"info": map[string]any{
-				"role":  "assistant",
-				"mode":  "build",
-				"agent": "build",
+				"role":       "assistant",
+				"mode":       openCodeDefaultMode,
+				"agent":      openCodeDefaultAgent,
+				"parentID":   userMessageID,
+				"providerID": openCodeDefaultProviderID,
+				"modelID":    openCodeDefaultModelID,
 				"path": map[string]any{
 					"cwd":  projectRoot,
 					"root": projectRoot,
 				},
-				"id":        fmt.Sprintf("msg-assistant-%s", sessionID),
+				"cost":      0,
+				"tokens":    map[string]any{"input": 0, "output": 0, "reasoning": 0, "cache": map[string]any{"read": 0, "write": 0}},
+				"finish":    "stop",
+				"time":      map[string]any{"created": now.UnixMilli(), "completed": now.UnixMilli()},
+				"id":        assistantMessageID,
 				"sessionID": sessionID,
 			},
-			"parts": []map[string]any{
-				{
-					"type": "text",
-					"text": summary,
-					"id":   fmt.Sprintf("prt-assistant-%s", sessionID),
-				},
-			},
+			"parts": parts,
 		}
-
-		// Add tool events if available
-		if len(bundle.ToolEvents) > 0 {
-			parts := msg["parts"].([]map[string]any)
-			for i, event := range bundle.ToolEvents {
-				toolPart := map[string]any{
-					"type": "tool_use",
-					"name": event.Type,
-					"id":   fmt.Sprintf("prt-tool-%d-%s", i, sessionID),
-				}
-				if event.Summary != "" {
-					toolPart["output"] = pathpatchOpenCodeText(event.Summary, bundle.ProjectRoot, projectRoot)
-				}
-				if event.Status != "" {
-					toolPart["status"] = event.Status
-				}
-				parts = append(parts, toolPart)
-			}
-			msg["parts"] = parts
-		}
+		msg["parts"] = append(msg["parts"].([]map[string]any), map[string]any{
+			"type":      "step-finish",
+			"reason":    "stop",
+			"cost":      0,
+			"tokens":    map[string]any{"input": 0, "output": 0, "reasoning": 0, "cache": map[string]any{"read": 0, "write": 0}},
+			"id":        openCodeObjectID("prt", sessionID, "assistant-step-finish"),
+			"sessionID": sessionID,
+			"messageID": assistantMessageID,
+		})
 
 		messages = append(messages, msg)
 	}
@@ -211,15 +236,21 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 			"info": map[string]any{
 				"role":      "user",
 				"time":      map[string]any{"created": now.UnixMilli()},
-				"agent":     "build",
-				"id":        fmt.Sprintf("msg-default-%s", sessionID),
+				"agent":     openCodeDefaultAgent,
+				"model":     model,
+				"summary":   map[string]any{"diffs": []any{}},
+				"id":        defaultMessageID,
 				"sessionID": sessionID,
 			},
 			"parts": []map[string]any{
 				{
-					"type": "text",
-					"text": "Imported session via work-bridge",
-					"id":   fmt.Sprintf("prt-default-%s", sessionID),
+					"type":      "text",
+					"text":      "Imported session via work-bridge",
+					"synthetic": false,
+					"time":      map[string]any{"start": 0, "end": 0},
+					"id":        openCodeObjectID("prt", sessionID, "default-text"),
+					"sessionID": sessionID,
+					"messageID": defaultMessageID,
 				},
 			},
 		})
@@ -227,6 +258,7 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 
 	return map[string]any{
 		"info":     info,
+		"model":    model,
 		"messages": messages,
 	}
 }
@@ -242,4 +274,28 @@ func pathpatchOpenCodeText(value, srcPath, dstPath string) string {
 		return value
 	}
 	return pathpatch.ReplacePathsInText(value, srcPath, dstPath)
+}
+
+func openCodeSessionID(sourceID string, now time.Time) string {
+	if strings.HasPrefix(sourceID, "ses_") {
+		return sourceID
+	}
+	seed := sourceID
+	if seed == "" {
+		seed = now.UTC().Format("20060102150405.000000000")
+	}
+	return openCodeObjectID("ses", seed, "session")
+}
+
+func openCodeObjectID(prefix string, parts ...string) string {
+	h := sha1.New()
+	for _, part := range parts {
+		_, _ = h.Write([]byte(part))
+		_, _ = h.Write([]byte{0})
+	}
+	sum := fmt.Sprintf("%x", h.Sum(nil))
+	if len(sum) > 24 {
+		sum = sum[:24]
+	}
+	return prefix + "_" + sum
 }
