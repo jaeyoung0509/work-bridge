@@ -488,22 +488,19 @@ func (a *projectAdapter) renderTargetConfig(path string, payload domain.MCPPaylo
 }
 
 func (a *projectAdapter) renderTargetConfigJSON(path string, payload domain.MCPPayload) (string, string, error) {
-	field := "mcpServers"
-	if a.target == domain.ToolOpenCode {
-		field = "mcp_servers"
-	}
 	config := map[string]any{}
 	if existing, err := a.fs.ReadFile(path); err == nil && len(existing) > 0 {
 		if err := jsonx.UnmarshalRelaxed(existing, &config); err != nil {
 			return "", fmt.Sprintf("skipped native MCP config patch for %s: %v", filepath.Base(path), err), err
 		}
 	}
-	config[field] = marshalMCPServers(payload.Servers)
+	encoded, warnings := a.marshalTargetMCPServers(payload.Servers)
+	config[a.mcpConfigField()] = encoded
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return "", "", err
 	}
-	return string(data) + "\n", "", nil
+	return string(data) + "\n", strings.Join(dedupeStrings(warnings), "; "), nil
 }
 
 // renderTargetConfigTOML generates a TOML MCP config for Codex.
@@ -536,6 +533,184 @@ func (a *projectAdapter) renderTargetConfigTOML(path string, payload domain.MCPP
 		return "", "", err
 	}
 	return string(out), "", nil
+}
+
+func (a *projectAdapter) renderMergedTargetConfig(path string, servers map[string]domain.MCPServerConfig) (string, []string, error) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".toml":
+		return a.renderMergedTargetConfigTOML(path, servers)
+	default:
+		return a.renderMergedTargetConfigJSON(path, servers)
+	}
+}
+
+func (a *projectAdapter) renderMergedTargetConfigJSON(path string, incoming map[string]domain.MCPServerConfig) (string, []string, error) {
+	config := map[string]any{}
+	if existing, err := a.fs.ReadFile(path); err == nil && len(existing) > 0 {
+		if err := jsonx.UnmarshalRelaxed(existing, &config); err != nil {
+			return "", nil, err
+		}
+	}
+
+	existingServers, parseWarnings := extractMCPServers(config)
+	merged, mergeWarnings := mergeMCPServerMaps(sliceToMCPServerMap(existingServers), incoming)
+	encoded, encodeWarnings := a.marshalTargetMCPServers(merged)
+	config[a.mcpConfigField()] = encoded
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return "", nil, err
+	}
+
+	warnings := append([]string{}, parseWarnings...)
+	warnings = append(warnings, mergeWarnings...)
+	warnings = append(warnings, encodeWarnings...)
+	return string(data) + "\n", dedupeStrings(warnings), nil
+}
+
+func (a *projectAdapter) renderMergedTargetConfigTOML(path string, incoming map[string]domain.MCPServerConfig) (string, []string, error) {
+	var config map[string]any
+	if existing, err := a.fs.ReadFile(path); err == nil && len(existing) > 0 {
+		if err := gotoml.Unmarshal(existing, &config); err != nil {
+			return "", nil, err
+		}
+	}
+	if config == nil {
+		config = map[string]any{}
+	}
+
+	existingServers, parseWarnings := extractMCPServers(config)
+	merged, mergeWarnings := mergeMCPServerMaps(sliceToMCPServerMap(existingServers), incoming)
+
+	mcpSection, _ := config["mcp"].(map[string]any)
+	if mcpSection == nil {
+		mcpSection = map[string]any{}
+	}
+	mcpSection["servers"] = marshalMCPServers(merged)
+	config["mcp"] = mcpSection
+
+	out, err := gotoml.Marshal(config)
+	if err != nil {
+		return "", nil, err
+	}
+
+	warnings := append([]string{}, parseWarnings...)
+	warnings = append(warnings, mergeWarnings...)
+	return string(out), dedupeStrings(warnings), nil
+}
+
+func (a *projectAdapter) mcpConfigField() string {
+	if a.target == domain.ToolOpenCode {
+		return "mcp"
+	}
+	return "mcpServers"
+}
+
+func (a *projectAdapter) marshalTargetMCPServers(servers map[string]domain.MCPServerConfig) (map[string]any, []string) {
+	if a.target != domain.ToolOpenCode {
+		return marshalMCPServers(servers), nil
+	}
+
+	keys := make([]string, 0, len(servers))
+	for key := range servers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	out := make(map[string]any, len(keys))
+	warnings := []string{}
+	for _, key := range keys {
+		server := servers[key]
+		node := map[string]any{
+			"enabled": true,
+		}
+		switch {
+		case server.URL != "":
+			node["type"] = "remote"
+			node["url"] = server.URL
+		default:
+			node["type"] = "local"
+			command := []string{}
+			if server.Command != "" {
+				command = append(command, server.Command)
+			}
+			command = append(command, server.Args...)
+			node["command"] = command
+		}
+		if len(server.Env) > 0 {
+			env := map[string]string{}
+			for envKey, envVal := range server.Env {
+				env[envKey] = envVal
+			}
+			node["environment"] = env
+		}
+		if server.Cwd != "" {
+			warnings = append(warnings, fmt.Sprintf("OpenCode MCP config does not support cwd for server %q; omitting it", server.Name))
+		}
+		out[key] = node
+	}
+	return out, dedupeStrings(warnings)
+}
+
+func mergeMCPServerMaps(existing map[string]domain.MCPServerConfig, incoming map[string]domain.MCPServerConfig) (map[string]domain.MCPServerConfig, []string) {
+	merged := map[string]domain.MCPServerConfig{}
+	for name, server := range existing {
+		merged[name] = server
+	}
+
+	keys := make([]string, 0, len(incoming))
+	for key := range incoming {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	warnings := []string{}
+	for _, name := range keys {
+		server := incoming[name]
+		if current, ok := merged[name]; ok {
+			if mcpServerConfigsEqual(current, server) {
+				continue
+			}
+			warnings = append(warnings, fmt.Sprintf("Global MCP server %q already exists in the target config with different settings; keeping the existing target entry", name))
+			continue
+		}
+		merged[name] = server
+	}
+	return merged, dedupeStrings(warnings)
+}
+
+func sliceToMCPServerMap(servers []domain.MCPServerConfig) map[string]domain.MCPServerConfig {
+	out := make(map[string]domain.MCPServerConfig, len(servers))
+	for _, server := range servers {
+		if strings.TrimSpace(server.Name) == "" {
+			continue
+		}
+		out[server.Name] = server
+	}
+	return out
+}
+
+func mcpServerConfigsEqual(a domain.MCPServerConfig, b domain.MCPServerConfig) bool {
+	if a.Name != b.Name || a.Transport != b.Transport || a.Command != b.Command || a.Cwd != b.Cwd || a.URL != b.URL {
+		return false
+	}
+	if len(a.Args) != len(b.Args) {
+		return false
+	}
+	for i := range a.Args {
+		if a.Args[i] != b.Args[i] {
+			return false
+		}
+	}
+	if len(a.Env) != len(b.Env) {
+		return false
+	}
+	for key, value := range a.Env {
+		if b.Env[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func marshalMCPServers(servers map[string]domain.MCPServerConfig) map[string]any {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
@@ -98,26 +99,41 @@ func (a *projectAdapter) applyGlobalSkills(payload domain.SwitchPayload, report 
 		if used[slug] > 1 {
 			slug = fmt.Sprintf("%s-%d", slug, used[slug])
 		}
-		targetPath := filepath.Join(targetSkillDir, slug+".md")
+		targetPath, candidatePaths := a.globalSkillPaths(targetSkillDir, slug)
 
-		existing, err := a.fs.ReadFile(targetPath)
-		if err == nil {
-			if normalizeSkillContent(string(existing)) == normalizeSkillContent(skill.Content) {
-				continue
+		shouldWrite := true
+		for _, candidatePath := range candidatePaths {
+			existing, err := a.fs.ReadFile(candidatePath)
+			if err == nil {
+				if normalizeSkillContent(string(existing)) == normalizeSkillContent(skill.Content) {
+					shouldWrite = false
+					break
+				}
+				report.Warnings = append(report.Warnings, fmt.Sprintf("Skill %q already exists with different content at %s; leaving the existing file unchanged", skill.Name, candidatePath))
+				shouldWrite = false
+				break
 			}
-			report.Warnings = append(report.Warnings, fmt.Sprintf("Skill %q already exists with different content at %s; leaving the existing file unchanged", skill.Name, targetPath))
+			if !errors.Is(err, fs.ErrNotExist) {
+				return report, fmt.Errorf("stat global skill %s: %w", candidatePath, err)
+			}
+		}
+		if !shouldWrite {
 			continue
 		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			return report, fmt.Errorf("stat global skill %s: %w", targetPath, err)
-		}
 
-		if err := a.fs.WriteFile(targetPath, []byte(skill.Content), 0o644); err != nil {
+		changed, backup, err := a.writeFile(targetPath, skill.Content)
+		if err != nil {
 			return report, fmt.Errorf("write global skill %s: %w", targetPath, err)
+		}
+		if !changed {
+			continue
 		}
 
 		report.FilesUpdated = append(report.FilesUpdated, targetPath)
 		report.Skills.Files = append(report.Skills.Files, targetPath)
+		if backup != "" {
+			report.BackupsCreated = append(report.BackupsCreated, backup)
+		}
 		installed++
 	}
 
@@ -126,39 +142,141 @@ func (a *projectAdapter) applyGlobalSkills(payload domain.SwitchPayload, report 
 	}
 	report.Skills.Files = dedupeStrings(report.Skills.Files)
 	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
+	report.BackupsCreated = dedupeStrings(report.BackupsCreated)
 	report.Warnings = dedupeStrings(report.Warnings)
 	return report, nil
 }
 
-// applyGlobalMCP installs user-scope/global MCP servers to the target tool's config.
-// Note: Full global MCP migration requires tool-specific config format handling.
-// This is currently limited to warnings; manual migration recommended.
+// applyGlobalMCP installs user-scope/global MCP servers to the target tool's global config.
 func (a *projectAdapter) applyGlobalMCP(payload domain.SwitchPayload, report domain.ApplyReport) (domain.ApplyReport, error) {
 	if len(payload.MCP.Sources) == 0 {
 		return report, nil
 	}
 
-	globalSourceCount := 0
-	globalServerCount := 0
-	for _, source := range payload.MCP.Sources {
+	servers, warnings := collectGlobalMCPServers(payload.MCP.Sources)
+	if len(servers) == 0 {
+		report.Warnings = dedupeStrings(append(report.Warnings, warnings...))
+		return report, nil
+	}
+
+	targetPath := a.globalMCPConfigPath()
+	if targetPath == "" {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("Global MCP config path is not configured for %s", a.target))
+		report.Warnings = dedupeStrings(report.Warnings)
+		return report, nil
+	}
+
+	content, renderWarnings, err := a.renderMergedTargetConfig(targetPath, servers)
+	if err != nil {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("Skipped global MCP apply for %s config %s: %v", a.target, targetPath, err))
+		report.Warnings = dedupeStrings(append(report.Warnings, warnings...))
+		return report, nil
+	}
+
+	changed, backup, err := a.writeFile(targetPath, content)
+	if err != nil {
+		return report, fmt.Errorf("write global MCP config %s: %w", targetPath, err)
+	}
+	if changed {
+		report.FilesUpdated = append(report.FilesUpdated, targetPath)
+		report.MCP.Files = append(report.MCP.Files, targetPath)
+	}
+	if backup != "" {
+		report.BackupsCreated = append(report.BackupsCreated, backup)
+	}
+
+	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
+	report.BackupsCreated = dedupeStrings(report.BackupsCreated)
+	report.MCP.Files = dedupeStrings(report.MCP.Files)
+	report.Warnings = dedupeStrings(append(append(report.Warnings, warnings...), renderWarnings...))
+	return report, nil
+}
+
+func collectGlobalMCPServers(sources []domain.MCPSource) (map[string]domain.MCPServerConfig, []string) {
+	type scopedSource struct {
+		scopeRank int
+		path      string
+		servers   []domain.MCPServerConfig
+	}
+
+	filtered := make([]scopedSource, 0, len(sources))
+	for _, source := range sources {
 		if source.Scope != "user" && source.Scope != "global" && source.Scope != "legacy" {
 			continue
 		}
 		if len(source.Servers) == 0 {
 			continue
 		}
-		globalSourceCount++
-		globalServerCount += len(source.Servers)
+		filtered = append(filtered, scopedSource{
+			scopeRank: mcpScopeRank(source.Scope),
+			path:      source.Path,
+			servers:   source.Servers,
+		})
 	}
 
-	if globalServerCount > 0 {
-		report.Warnings = append(report.Warnings,
-			fmt.Sprintf("Found %d user-scope MCP server(s) across %d source file(s). Native global MCP apply is not implemented for %s yet",
-				globalServerCount, globalSourceCount, a.target))
-	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].scopeRank == filtered[j].scopeRank {
+			return filtered[i].path < filtered[j].path
+		}
+		return filtered[i].scopeRank < filtered[j].scopeRank
+	})
 
-	report.Warnings = dedupeStrings(report.Warnings)
-	return report, nil
+	servers := map[string]domain.MCPServerConfig{}
+	sourceByServer := map[string]string{}
+	warnings := []string{}
+	for _, source := range filtered {
+		for _, server := range source.servers {
+			if strings.TrimSpace(server.Name) == "" {
+				continue
+			}
+			if existing, ok := servers[server.Name]; ok {
+				if !mcpServerConfigsEqual(existing, server) {
+					warnings = append(warnings, fmt.Sprintf("Global MCP server %q is declared by multiple source configs; keeping the first entry from %s", server.Name, sourceByServer[server.Name]))
+				}
+				continue
+			}
+			servers[server.Name] = server
+			sourceByServer[server.Name] = source.path
+		}
+	}
+	return servers, dedupeStrings(warnings)
+}
+
+func (a *projectAdapter) globalSkillPaths(targetSkillDir string, slug string) (string, []string) {
+	switch a.target {
+	case domain.ToolOpenCode:
+		primary := filepath.Join(targetSkillDir, slug, "SKILL.md")
+		return primary, []string{primary, filepath.Join(targetSkillDir, slug+".md")}
+	default:
+		primary := filepath.Join(targetSkillDir, slug+".md")
+		return primary, []string{primary, filepath.Join(targetSkillDir, slug, "SKILL.md")}
+	}
+}
+
+func (a *projectAdapter) globalMCPConfigPath() string {
+	switch a.target {
+	case domain.ToolCodex:
+		return filepath.Join(a.toolPaths.Dir(domain.ToolCodex, a.homeDir), "config.toml")
+	case domain.ToolClaude:
+		return filepath.Join(a.toolPaths.Dir(domain.ToolClaude, a.homeDir), "settings.json")
+	case domain.ToolGemini:
+		return filepath.Join(a.toolPaths.Dir(domain.ToolGemini, a.homeDir), "settings.json")
+	case domain.ToolOpenCode:
+		candidates := []string{
+			filepath.Join(a.homeDir, ".config", "opencode", "opencode.jsonc"),
+			filepath.Join(a.homeDir, ".config", "opencode", "opencode.json"),
+			filepath.Join(a.toolPaths.Dir(domain.ToolOpenCode, a.homeDir), "opencode.jsonc"),
+			filepath.Join(a.toolPaths.Dir(domain.ToolOpenCode, a.homeDir), "opencode.json"),
+		}
+		for _, candidate := range candidates {
+			if _, err := a.fs.Stat(candidate); err == nil {
+				return candidate
+			}
+		}
+		return filepath.Join(a.homeDir, ".config", "opencode", "opencode.json")
+	default:
+		return ""
+	}
 }
 
 func (a *projectAdapter) applyNativeGlobalArtifacts(payload domain.SwitchPayload, report domain.ApplyReport) (domain.ApplyReport, error) {

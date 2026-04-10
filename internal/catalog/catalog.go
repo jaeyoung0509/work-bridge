@@ -51,7 +51,7 @@ func ScanSkills(fs fsx.FS, cwd, homeDir string) ([]SkillEntry, error) {
 
 	entries := []SkillEntry{}
 	for _, root := range roots {
-		files, err := listMarkdownFiles(fs, root.Path, "SKILL.md")
+		files, err := listSkillFiles(fs, root.Path)
 		if err != nil {
 			return nil, err
 		}
@@ -160,7 +160,12 @@ func parseSkillEntry(fs fsx.FS, path string, root string, source string, scope s
 	}
 
 	if name == "" {
-		name = filepath.Base(filepath.Dir(path))
+		switch filepath.Base(path) {
+		case "SKILL.md":
+			name = filepath.Base(filepath.Dir(path))
+		default:
+			name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		}
 	}
 	if description == "" {
 		description = firstParagraph(content)
@@ -178,13 +183,13 @@ func parseSkillEntry(fs fsx.FS, path string, root string, source string, scope s
 	}
 }
 
-func listMarkdownFiles(fs fsx.FS, root string, fileName string) ([]string, error) {
+func listSkillFiles(fs fsx.FS, root string) ([]string, error) {
 	info, err := fs.Stat(root)
 	if err != nil {
 		return nil, nil
 	}
 	if !info.IsDir() {
-		if filepath.Base(root) == fileName {
+		if isSkillFile(filepath.Dir(root), root) {
 			return []string{root}, nil
 		}
 		return nil, nil
@@ -198,18 +203,29 @@ func listMarkdownFiles(fs fsx.FS, root string, fileName string) ([]string, error
 	for _, entry := range entries {
 		path := filepath.Join(root, entry.Name())
 		if entry.IsDir() {
-			nested, err := listMarkdownFiles(fs, path, fileName)
+			nested, err := listSkillFiles(fs, path)
 			if err != nil {
 				return nil, err
 			}
 			files = append(files, nested...)
 			continue
 		}
-		if entry.Name() == fileName {
+		if isSkillFile(root, path) {
 			files = append(files, path)
 		}
 	}
 	return files, nil
+}
+
+func isSkillFile(root string, path string) bool {
+	base := filepath.Base(path)
+	if base == "SKILL.md" {
+		return true
+	}
+	if !strings.HasSuffix(strings.ToLower(base), ".md") || strings.HasPrefix(base, ".") {
+		return false
+	}
+	return filepath.Dir(path) == root
 }
 
 func dedupeSkills(entries []SkillEntry) []SkillEntry {
