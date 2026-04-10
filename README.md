@@ -48,7 +48,7 @@ The current design is intentionally simpler than the older import/export pipelin
 | **OpenCode** | ✅ (SQLite) | ✅ | ✅ (Delegate)* |
 | **Codex CLI** | ✅ | ✅ | ✅ |
 
-* OpenCode Native apply and export utilize the official OpenCode CLI delegate (`opencode import <file>`) to ensure database integrity rather than performing direct raw SQLite writes.
+* OpenCode Native apply uses the official OpenCode CLI delegate (`opencode import <file>`), and native export writes an import-compatible `.opencode_export.json` payload rather than mutating SQLite directly.
 
 **Mode Project (`--mode project`):** Applies instruction files (`CLAUDE.md`, `GEMINI.md`, etc.), project-scoped skills, and MCP configs inside the project root only. Does NOT modify external tool storage. Safe for teams and shared repos.
 
@@ -61,7 +61,7 @@ The current design is intentionally simpler than the older import/export pipelin
 | Session write | ✅ JSONL | ✅ JSON | ✅ JSONL | ✅ CLI delegate |
 | History index update | ✅ `history.jsonl` | ✅ `projects.json` | ✅ `session_index.jsonl` | Via `opencode import` |
 | CWD/path patching | ✅ Absolute paths | ✅ Project paths | ✅ `session_meta.cwd` + text | Via payload format |
-| User-scope skills | ✅ `~/.claude/skills/` | ⚠️ No standard dir | ✅ `~/.codex/skills/` | ✅ `~/.config/opencode/skills/` |
+| User-scope skills | ✅ `~/.claude/skills/` | ✅ `~/.gemini/GEMINI.md` managed block | ✅ `~/.codex/skills/` | ✅ `~/.config/opencode/skills/` |
 | Global MCP migration | ⚠️ Advisory warning | ⚠️ Advisory warning | ⚠️ Advisory warning | ⚠️ Advisory warning |
 
 > **Note on Global MCP**: Automatic migration of user-scope/global MCP server configs is not fully implemented due to tool-specific config format differences (TOML vs JSON vs JSONC). Manual migration recommended.
@@ -141,6 +141,14 @@ work-bridge export \
   --project /path/to/repo \
   --out /tmp/claude-handoff
 ```
+
+### 5. Validate a full native migration chain locally
+
+```bash
+./scripts/test-native-chain.sh
+```
+
+The helper script walks `codex -> gemini -> claude -> opencode` for the current project, auto-builds `./bin/work-bridge` if needed, and verifies each target session after apply. It is intended for local manual validation and requires `jq`.
 
 ---
 
@@ -265,7 +273,7 @@ Current behavior to be aware of:
   - Claude: `~/.claude/skills/`
   - Codex: `~/.codex/skills/`
   - OpenCode: `~/.config/opencode/skills/`
-  - Gemini: no standard user-scope skill directory
+  - Gemini: appended to a managed block inside `~/.gemini/GEMINI.md`
 - Global MCP configs trigger advisory warnings with guidance (manual migration recommended)
 - Path patching handles absolute paths in tool results, shell outputs, and text content
 - `--session-only` disables skills and MCP materialization
@@ -279,7 +287,7 @@ When migrating sessions between machines with different directory structures, `w
 - **Codex**: Updates `session_meta.cwd` and all JSONL text content
 - **Gemini**: Updates paths in session JSON content
 - **Claude**: Updates paths in JSONL session files
-- **OpenCode**: Handled via delegate payload format (directory field in `info` block)
+- **OpenCode**: Handled via delegate payload format (`info.directory` plus assistant `path.cwd` / `path.root`)
 
 This ensures tool results, file paths, and shell outputs reference the target machine's paths rather than the source machine's paths.
 
