@@ -50,8 +50,35 @@ The current design is intentionally simpler than the older import/export pipelin
 
 * OpenCode Native apply and export utilize the official OpenCode CLI delegate (`opencode import <file>`) to ensure database integrity rather than performing direct raw SQLite writes.
 
-**Mode Project:** Applies instruction files (`CLAUDE.md`, `GEMINI.md`, etc.) and tools/skills inside the project root only.
-**Mode Native:** Modifies external system state (e.g. `~/.codex/session_index.jsonl`, `~/.gemini/projects.json`, `~/.claude/projects/`, or invokes `opencode import`) to directly load the resume state.
+**Mode Project (`--mode project`):** Applies instruction files (`CLAUDE.md`, `GEMINI.md`, etc.), project-scoped skills, and MCP configs inside the project root only. Does NOT modify external tool storage. Safe for teams and shared repos.
+
+**Mode Native (`--mode native`):** Modifies external system state (e.g. `~/.codex/session_index.jsonl`, `~/.gemini/projects.json`, `~/.claude/projects/`, or invokes `opencode import`) to directly load the resume state. Enables seamless session continuation across machines. Also migrates user-scope/global skills to target tool directories.
+
+### Native Mode Support Details
+
+| Feature | Claude | Gemini | Codex | OpenCode |
+|---------|--------|--------|-------|----------|
+| Session write | ✅ JSONL | ✅ JSON | ✅ JSONL | ✅ CLI delegate |
+| History index update | ✅ `history.jsonl` | ✅ `projects.json` | ✅ `session_index.jsonl` | Via `opencode import` |
+| CWD/path patching | ✅ Absolute paths | ✅ Project paths | ✅ `session_meta.cwd` + text | Via payload format |
+| User-scope skills | ✅ `~/.claude/skills/` | ⚠️ No standard dir | ✅ `~/.codex/skills/` | ✅ `~/.config/opencode/skills/` |
+| Global MCP migration | ⚠️ Advisory warning | ⚠️ Advisory warning | ⚠️ Advisory warning | ⚠️ Advisory warning |
+
+> **Note on Global MCP**: Automatic migration of user-scope/global MCP server configs is not fully implemented due to tool-specific config format differences (TOML vs JSON vs JSONC). Manual migration recommended.
+
+### When to Use Which Mode
+
+**Use `--mode project` when:**
+- Working in teams or shared repos
+- You want to preserve instruction context across tools
+- You don't want to modify external tool storage
+- Safe, non-destructive handoff is preferred
+
+**Use `--mode native` when:**
+- Migrating sessions between machines (same user, different device)
+- You want to resume a session natively in the target tool
+- You need to transfer user-scope skills between tools
+- Cross-device work continuity is required
 
 ---
 
@@ -224,18 +251,37 @@ Supported tools:
 
 ## Limits
 
-Current non-goals in this slice:
+Current non-goals:
 
-- no home-level session-store injection
-- no recreation of a target tool's private resume database
+- no direct SQLite write for OpenCode (uses official CLI delegate for safety)
+- no automatic global MCP config migration (tool-specific format differences require manual handling)
 - no promise that every source-specific tool event becomes meaningful in every target
 
 Current behavior to be aware of:
 
-- `switch` is project-native apply, not native session resurrection
-- `export` is out-of-project handoff generation, not a bundle archive format
+- `--mode project` writes instruction files and project-scoped context only (safe for teams)
+- `--mode native` modifies external tool storage for session resume state (machine-specific)
+- Global/user-scope skills are installed to target tool directories in native mode
+  - Claude: `~/.claude/skills/`
+  - Codex: `~/.codex/skills/`
+  - OpenCode: `~/.config/opencode/skills/`
+  - Gemini: no standard user-scope skill directory
+- Global MCP configs trigger advisory warnings with guidance (manual migration recommended)
+- Path patching handles absolute paths in tool results, shell outputs, and text content
 - `--session-only` disables skills and MCP materialization
 - `--dry-run` is the safest first step for new tool pairs
+- `--no-skills` and `--no-mcp` skip supplementary context
+
+### Path Patching in Native Mode
+
+When migrating sessions between machines with different directory structures, `work-bridge` automatically patches absolute paths:
+
+- **Codex**: Updates `session_meta.cwd` and all JSONL text content
+- **Gemini**: Updates paths in session JSON content
+- **Claude**: Updates paths in JSONL session files
+- **OpenCode**: Handled via delegate payload format (directory field in `info` block)
+
+This ensures tool results, file paths, and shell outputs reference the target machine's paths rather than the source machine's paths.
 
 ---
 

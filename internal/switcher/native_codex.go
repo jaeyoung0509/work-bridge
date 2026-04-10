@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/pathpatch"
 )
 
 // previewNativeCodex provides a plan for Codex native mode.
@@ -41,7 +42,10 @@ func (a *projectAdapter) applyNativeCodex(payload domain.SwitchPayload, plan dom
 	}
 	rolloutPath := filepath.Join(codexSessionsDir, rolloutFilename)
 
+	// Build rollout content with path patching
 	rolloutContent := buildCodexRollout(payload.Bundle, plan.ProjectRoot, now)
+	rolloutContent = pathpatchCodexPatchPaths(rolloutContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
+
 	if err := a.fs.MkdirAll(codexSessionsDir, 0o755); err != nil {
 		return report, err
 	}
@@ -70,7 +74,7 @@ func (a *projectAdapter) applyNativeCodex(payload domain.SwitchPayload, plan dom
 	report.FilesUpdated = append(report.FilesUpdated, indexPath)
 
 	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
-	return report, nil
+	return a.applyNativeGlobalArtifacts(payload, report)
 }
 
 // exportNativeCodex exports the imported session natively to the Codex storage layout.
@@ -90,7 +94,10 @@ func (a *projectAdapter) exportNativeCodex(payload domain.SwitchPayload, plan do
 	}
 	rolloutPath := filepath.Join(codexSessionsDir, rolloutFilename)
 
+	// Build rollout content with path patching
 	rolloutContent := buildCodexRollout(payload.Bundle, plan.ProjectRoot, now)
+	rolloutContent = pathpatchCodexPatchPaths(rolloutContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
+
 	if err := a.fs.MkdirAll(codexSessionsDir, 0o755); err != nil {
 		return report, err
 	}
@@ -167,4 +174,15 @@ func buildCodexRollout(bundle domain.SessionBundle, projectRoot string, now time
 		b.WriteString(string(msgLineData) + "\n")
 	}
 	return b.String()
+}
+
+// pathpatchCodexPatchPaths replaces source project root paths with target paths
+// in Codex rollout JSONL content. This handles absolute paths in tool results,
+// shell outputs, and other text content.
+func pathpatchCodexPatchPaths(content, srcPath, dstPath string) string {
+	if srcPath == "" || srcPath == dstPath {
+		return content
+	}
+	// Use generic path patching for all text content
+	return pathpatch.ReplacePathsInText(content, srcPath, dstPath)
 }

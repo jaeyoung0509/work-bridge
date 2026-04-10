@@ -41,13 +41,47 @@ func inspectOpenCode(opts Options) ([]Session, []string, error) {
 	}
 	defer db.Close()
 
-	// Query basic session metadata.
-	rows, err := db.Query("SELECT id, title, updated_at, project_id, workspace_id FROM session")
+	sessionCols, err := tableColumns(db, "session")
 	if err != nil {
-		rows, err = db.Query("SELECT id, title, updatedAt as updated_at, projectId as project_id, workspaceId as workspace_id FROM session")
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to query opencode session table: %w", err)
-		}
+		return nil, nil, fmt.Errorf("failed to inspect opencode session schema: %w", err)
+	}
+
+	updatedExpr := "NULL"
+	switch {
+	case sessionCols["updated_at"]:
+		updatedExpr = "updated_at"
+	case sessionCols["updatedAt"]:
+		updatedExpr = "updatedAt"
+	case sessionCols["time_updated"]:
+		updatedExpr = "CAST(time_updated AS TEXT)"
+	}
+
+	projectExpr := "NULL"
+	switch {
+	case sessionCols["project_id"]:
+		projectExpr = "project_id"
+	case sessionCols["projectId"]:
+		projectExpr = "projectId"
+	}
+
+	workspaceExpr := "NULL"
+	switch {
+	case sessionCols["workspace_id"]:
+		workspaceExpr = "workspace_id"
+	case sessionCols["workspaceId"]:
+		workspaceExpr = "workspaceId"
+	}
+
+	// Query basic session metadata.
+	query := fmt.Sprintf(
+		"SELECT id, title, %s AS updated_at, %s AS project_id, %s AS workspace_id FROM session",
+		updatedExpr,
+		projectExpr,
+		workspaceExpr,
+	)
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to query opencode session table: %w", err)
 	}
 	defer rows.Close()
 
@@ -57,7 +91,7 @@ func inspectOpenCode(opts Options) ([]Session, []string, error) {
 		if err := rows.Scan(&id, &title, &updatedAt, &projectId, &workspaceId); err != nil {
 			continue
 		}
-		
+
 		s := Session{
 			ID:          id.String,
 			Title:       title.String,
@@ -79,7 +113,7 @@ func inspectOpenCode(opts Options) ([]Session, []string, error) {
 			}
 			s.ProjectRoot = dir
 		}
-		
+
 		// Attempt to count messages
 		var count int
 		if err := db.QueryRow("SELECT COUNT(*) FROM message WHERE session_id = ?", id.String).Scan(&count); err != nil {
@@ -93,4 +127,28 @@ func inspectOpenCode(opts Options) ([]Session, []string, error) {
 	sortSessions(sessions)
 
 	return sessions, []string{fmt.Sprintf("Read OpenCode sessions from %s", dbPath)}, nil
+}
+
+func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	columns := map[string]bool{}
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, dataType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err != nil {
+			return nil, err
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return columns, nil
 }
