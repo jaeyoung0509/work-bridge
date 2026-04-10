@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -27,14 +26,11 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
 	"github.com/jaeyoung0509/work-bridge/internal/inspect"
 	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/jsonx"
 	"github.com/jaeyoung0509/work-bridge/internal/tui"
 )
 
-var (
-	jsoncLineComment  = regexp.MustCompile(`(?m)^\s*//.*$`)
-	jsoncBlockComment = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	errMCPMethod      = fmt.Errorf("mcp method error")
-)
+var errMCPMethod = fmt.Errorf("mcp method error")
 
 type mcpConfigSummary struct {
 	Format      string
@@ -681,16 +677,15 @@ func summarizeMCPConfig(path string, data []byte) mcpConfigSummary {
 			return mcpConfigSummary{
 				Format:   format,
 				Status:   "broken",
-				Warnings: []string{fmt.Sprintf("parse failed: %v", err)},
+				Warnings: []string{fmt.Sprintf("parse failed for %s: %v", path, err)},
 			}
 		}
 	case "json", "jsonc":
-		sanitized := jsoncBlockComment.ReplaceAllString(jsoncLineComment.ReplaceAllString(string(data), ""), "")
-		if err := json.Unmarshal([]byte(sanitized), &parsed); err != nil {
+		if err := jsonx.UnmarshalRelaxed(data, &parsed); err != nil {
 			return mcpConfigSummary{
 				Format:   format,
 				Status:   "broken",
-				Warnings: []string{fmt.Sprintf("parse failed: %v", err)},
+				Warnings: []string{fmt.Sprintf("parse failed for %s: %v", path, err)},
 			}
 		}
 	default:

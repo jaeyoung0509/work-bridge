@@ -1,7 +1,6 @@
 package switcher
 
 import (
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -10,6 +9,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/jsonx"
 )
 
 type mcpConfigSummary struct {
@@ -33,23 +33,15 @@ func summarizeMCPConfig(path string, data []byte) mcpConfigSummary {
 			return mcpConfigSummary{
 				Format:   format,
 				Status:   "broken",
-				Warnings: []string{fmt.Sprintf("parse failed: %v", err)},
+				Warnings: []string{fmt.Sprintf("parse failed for %s: %v", path, err)},
 			}
 		}
-	case "json":
-		if err := json.Unmarshal(data, &parsed); err != nil {
+	case "json", "jsonc":
+		if err := jsonx.UnmarshalRelaxed(data, &parsed); err != nil {
 			return mcpConfigSummary{
 				Format:   format,
 				Status:   "broken",
-				Warnings: []string{fmt.Sprintf("parse failed: %v", err)},
-			}
-		}
-	case "jsonc":
-		if err := json.Unmarshal(stripJSONCComments(data), &parsed); err != nil {
-			return mcpConfigSummary{
-				Format:   format,
-				Status:   "broken",
-				Warnings: []string{fmt.Sprintf("parse failed: %v", err)},
+				Warnings: []string{fmt.Sprintf("parse failed for %s: %v", path, err)},
 			}
 		}
 	default:
@@ -222,49 +214,6 @@ func mcpScopeRank(scope string) int {
 	default:
 		return 5
 	}
-}
-
-func stripJSONCComments(data []byte) []byte {
-	lines := strings.Split(string(data), "\n")
-	if len(lines) == 0 {
-		return data
-	}
-	var b strings.Builder
-	inBlock := false
-	for _, line := range lines {
-		text := line
-		if inBlock {
-			if end := strings.Index(text, "*/"); end >= 0 {
-				inBlock = false
-				text = text[end+2:]
-			} else {
-				continue
-			}
-		}
-		for {
-			start := strings.Index(text, "/*")
-			if start < 0 {
-				break
-			}
-			end := strings.Index(text[start+2:], "*/")
-			if end < 0 {
-				text = text[:start]
-				inBlock = true
-				break
-			}
-			text = text[:start] + text[start+2+end+2:]
-		}
-		if idx := strings.Index(text, "//"); idx >= 0 {
-			text = text[:idx]
-		}
-		text = strings.TrimSpace(text)
-		if text == "" {
-			continue
-		}
-		b.WriteString(text)
-		b.WriteByte('\n')
-	}
-	return []byte(b.String())
 }
 
 func stringValue(value any) string {

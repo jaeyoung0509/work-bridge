@@ -231,6 +231,179 @@ func TestNativePatchGemini_ProjectsJSONInjected(t *testing.T) {
 	}
 }
 
+func TestApplyGlobalSkillsGeminiWritesManagedInstructionBlock(t *testing.T) {
+	homeDir := t.TempDir()
+	adapter := &projectAdapter{
+		target:  domain.ToolGemini,
+		fs:      osFS{},
+		now:     time.Now,
+		homeDir: homeDir,
+	}
+
+	payload := domain.SwitchPayload{
+		Skills: []domain.SkillPayload{{
+			Name:        "reviewer",
+			Scope:       "user",
+			Description: "Review skill",
+			Content:     "# Reviewer\n\nCheck changes carefully.",
+		}},
+	}
+	report := domain.ApplyReport{
+		Status: domain.SwitchStateApplied,
+		Skills: domain.ApplyComponentResult{State: domain.SwitchStateApplied},
+	}
+
+	report, err := adapter.applyGlobalSkills(payload, report)
+	if err != nil {
+		t.Fatalf("applyGlobalSkills failed: %v", err)
+	}
+
+	targetPath := filepath.Join(homeDir, ".gemini", "GEMINI.md")
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("expected Gemini global instruction file, got %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "## work-bridge imported global skills") {
+		t.Fatalf("expected managed global skills header, got:\n%s", text)
+	}
+	if !strings.Contains(text, "# Reviewer") {
+		t.Fatalf("expected imported skill content, got:\n%s", text)
+	}
+	if !containsFile(report.FilesUpdated, targetPath) {
+		t.Fatalf("expected %s in FilesUpdated, got %v", targetPath, report.FilesUpdated)
+	}
+	if !containsFile(report.Skills.Files, targetPath) {
+		t.Fatalf("expected %s in Skills.Files, got %v", targetPath, report.Skills.Files)
+	}
+}
+
+func TestApplyGlobalSkillsSkipsExistingIdenticalSkillWithoutWarning(t *testing.T) {
+	homeDir := t.TempDir()
+	targetPath := filepath.Join(homeDir, ".claude", "skills", "reviewer.md")
+	writeFile(t, targetPath, "# Reviewer\n\nCheck changes carefully.\n")
+
+	adapter := &projectAdapter{
+		target:  domain.ToolClaude,
+		fs:      osFS{},
+		now:     time.Now,
+		homeDir: homeDir,
+	}
+
+	payload := domain.SwitchPayload{
+		Skills: []domain.SkillPayload{{
+			Name:    "reviewer",
+			Scope:   "user",
+			Content: "# Reviewer\n\nCheck changes carefully.\n",
+		}},
+	}
+	report := domain.ApplyReport{
+		Status: domain.SwitchStateApplied,
+		Skills: domain.ApplyComponentResult{State: domain.SwitchStateApplied},
+	}
+
+	report, err := adapter.applyGlobalSkills(payload, report)
+	if err != nil {
+		t.Fatalf("applyGlobalSkills failed: %v", err)
+	}
+	if len(report.Warnings) != 0 {
+		t.Fatalf("expected no warnings for identical existing skill, got %v", report.Warnings)
+	}
+	if containsFile(report.FilesUpdated, targetPath) {
+		t.Fatalf("did not expect existing identical skill to be rewritten, got %v", report.FilesUpdated)
+	}
+}
+
+func TestApplyGlobalMCPIgnoresGlobalSourcesWithoutServers(t *testing.T) {
+	adapter := &projectAdapter{
+		target: domain.ToolCodex,
+		fs:     osFS{},
+		now:    time.Now,
+	}
+
+	payload := domain.SwitchPayload{
+		MCP: domain.MCPPayload{
+			Sources: []domain.MCPSource{{
+				Path:          "/tmp/opencode.json",
+				Scope:         "user",
+				Status:        "broken",
+				ParseWarnings: []string{"parse failed"},
+			}},
+		},
+	}
+	report := domain.ApplyReport{Status: domain.SwitchStateApplied}
+
+	report, err := adapter.applyGlobalMCP(payload, report)
+	if err != nil {
+		t.Fatalf("applyGlobalMCP failed: %v", err)
+	}
+	if len(report.Warnings) != 0 {
+		t.Fatalf("expected no warnings without parsed global MCP servers, got %v", report.Warnings)
+	}
+}
+
+func TestApplyGlobalMCPWarnsWhenParsedGlobalServersExist(t *testing.T) {
+	adapter := &projectAdapter{
+		target: domain.ToolCodex,
+		fs:     osFS{},
+		now:    time.Now,
+	}
+
+	payload := domain.SwitchPayload{
+		MCP: domain.MCPPayload{
+			Sources: []domain.MCPSource{{
+				Path:  "/tmp/settings.json",
+				Scope: "user",
+				Servers: []domain.MCPServerConfig{{
+					Name:    "github",
+					Command: "mcp-github",
+				}},
+			}},
+		},
+	}
+	report := domain.ApplyReport{Status: domain.SwitchStateApplied}
+
+	report, err := adapter.applyGlobalMCP(payload, report)
+	if err != nil {
+		t.Fatalf("applyGlobalMCP failed: %v", err)
+	}
+	if len(report.Warnings) != 1 {
+		t.Fatalf("expected one warning, got %v", report.Warnings)
+	}
+	if !strings.Contains(report.Warnings[0], "Native global MCP apply is not implemented for codex yet") {
+		t.Fatalf("unexpected warning %q", report.Warnings[0])
+	}
+}
+
+func TestApplyPlanSkipsManagedNativePatchesForNativeMode(t *testing.T) {
+	projectRoot := t.TempDir()
+	homeDir := t.TempDir()
+	adapter := &projectAdapter{
+		target:  domain.ToolGemini,
+		fs:      osFS{},
+		now:     time.Now,
+		homeDir: homeDir,
+	}
+
+	bundle := domain.NewSessionBundle(domain.ToolClaude, "/Users/source/project")
+	bundle.SourceSessionID = "session-1"
+	payload := domain.SwitchPayload{Bundle: bundle}
+
+	plan, err := adapter.previewNativeGemini(payload, projectRoot, "")
+	if err != nil {
+		t.Fatalf("previewNativeGemini failed: %v", err)
+	}
+	report, err := adapter.applyPlan(payload, plan)
+	if err != nil {
+		t.Fatalf("applyPlan failed: %v", err)
+	}
+	for _, warning := range report.Warnings {
+		if strings.Contains(warning, "projects.json") {
+			t.Fatalf("did not expect managed Gemini patch warning in native mode, got %v", report.Warnings)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Claude native patch: sessions-index.json removal
 // ---------------------------------------------------------------------------

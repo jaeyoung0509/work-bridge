@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"strings"
 
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
 )
@@ -72,6 +73,10 @@ func (a *projectAdapter) applyGlobalSkills(payload domain.SwitchPayload, report 
 		return report, nil
 	}
 
+	if a.target == domain.ToolGemini {
+		return a.applyGeminiGlobalSkills(globalSkills, report)
+	}
+
 	// Install to target tool's user-scope skill directory
 	targetSkillDir := a.globalSkillDir()
 	if targetSkillDir == "" {
@@ -95,11 +100,15 @@ func (a *projectAdapter) applyGlobalSkills(payload domain.SwitchPayload, report 
 		}
 		targetPath := filepath.Join(targetSkillDir, slug+".md")
 
-		// Check if file already exists
-		if _, err := a.fs.Stat(targetPath); err == nil {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("Skill %q already exists at %s, skipping", skill.Name, targetPath))
+		existing, err := a.fs.ReadFile(targetPath)
+		if err == nil {
+			if normalizeSkillContent(string(existing)) == normalizeSkillContent(skill.Content) {
+				continue
+			}
+			report.Warnings = append(report.Warnings, fmt.Sprintf("Skill %q already exists with different content at %s; leaving the existing file unchanged", skill.Name, targetPath))
 			continue
-		} else if !errors.Is(err, fs.ErrNotExist) {
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
 			return report, fmt.Errorf("stat global skill %s: %w", targetPath, err)
 		}
 
@@ -108,13 +117,14 @@ func (a *projectAdapter) applyGlobalSkills(payload domain.SwitchPayload, report 
 		}
 
 		report.FilesUpdated = append(report.FilesUpdated, targetPath)
+		report.Skills.Files = append(report.Skills.Files, targetPath)
 		installed++
 	}
 
-	if installed > 0 {
-		report.Warnings = append(report.Warnings, fmt.Sprintf("Installed %d global skill(s) to %s", installed, a.target))
+	if installed > 0 && report.Skills.Summary == "" {
+		report.Skills.Summary = fmt.Sprintf("%d skill files applied", len(report.Skills.Files))
 	}
-
+	report.Skills.Files = dedupeStrings(report.Skills.Files)
 	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
 	report.Warnings = dedupeStrings(report.Warnings)
 	return report, nil
@@ -128,18 +138,23 @@ func (a *projectAdapter) applyGlobalMCP(payload domain.SwitchPayload, report dom
 		return report, nil
 	}
 
-	// Count user-scope/global MCP sources
-	globalCount := 0
+	globalSourceCount := 0
+	globalServerCount := 0
 	for _, source := range payload.MCP.Sources {
-		if source.Scope == "user" || source.Scope == "global" || source.Scope == "legacy" {
-			globalCount++
+		if source.Scope != "user" && source.Scope != "global" && source.Scope != "legacy" {
+			continue
 		}
+		if len(source.Servers) == 0 {
+			continue
+		}
+		globalSourceCount++
+		globalServerCount += len(source.Servers)
 	}
 
-	if globalCount > 0 {
+	if globalServerCount > 0 {
 		report.Warnings = append(report.Warnings,
-			fmt.Sprintf("Found %d global MCP source(s). Manual migration recommended for: %s",
-				globalCount, a.target))
+			fmt.Sprintf("Found %d user-scope MCP server(s) across %d source file(s). Native global MCP apply is not implemented for %s yet",
+				globalServerCount, globalSourceCount, a.target))
 	}
 
 	report.Warnings = dedupeStrings(report.Warnings)
@@ -178,4 +193,54 @@ func (a *projectAdapter) globalSkillDir() string {
 		// Gemini doesn't have a standard user-scope skill directory
 		return ""
 	}
+}
+
+func (a *projectAdapter) applyGeminiGlobalSkills(skills []domain.SkillPayload, report domain.ApplyReport) (domain.ApplyReport, error) {
+	targetPath := filepath.Join(a.toolPaths.Dir(domain.ToolGemini, a.homeDir), "GEMINI.md")
+	existing, _ := a.fs.ReadFile(targetPath)
+	next := upsertManagedBlock(string(existing), renderGeminiGlobalSkillsBlock(skills))
+
+	changed, backup, err := a.writeFile(targetPath, next)
+	if err != nil {
+		return report, fmt.Errorf("write gemini global skills %s: %w", targetPath, err)
+	}
+	if changed {
+		report.FilesUpdated = append(report.FilesUpdated, targetPath)
+		report.Skills.Files = append(report.Skills.Files, targetPath)
+	}
+	if backup != "" {
+		report.BackupsCreated = append(report.BackupsCreated, backup)
+	}
+
+	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
+	report.BackupsCreated = dedupeStrings(report.BackupsCreated)
+	report.Skills.Files = dedupeStrings(report.Skills.Files)
+	return report, nil
+}
+
+func renderGeminiGlobalSkillsBlock(skills []domain.SkillPayload) string {
+	lines := []string{
+		managedBlockStart,
+		"## work-bridge imported global skills",
+	}
+	for _, skill := range skills {
+		name := strings.TrimSpace(skill.Name)
+		if name == "" {
+			name = "Imported Skill"
+		}
+		lines = append(lines, "", "### "+name)
+		if description := strings.TrimSpace(skill.Description); description != "" {
+			lines = append(lines, "", description)
+		}
+		content := strings.TrimSpace(skill.Content)
+		if content != "" {
+			lines = append(lines, "", content)
+		}
+	}
+	lines = append(lines, managedBlockEnd, "")
+	return strings.Join(lines, "\n")
+}
+
+func normalizeSkillContent(content string) string {
+	return strings.TrimSpace(content)
 }
