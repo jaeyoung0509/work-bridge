@@ -82,7 +82,10 @@ func (a *projectAdapter) applyNativeGemini(payload domain.SwitchPayload, plan do
 		id = fmt.Sprintf("session-%s", now.Format("20060102150405"))
 	}
 	chatPath := filepath.Join(chatDir, fmt.Sprintf("session-%s.json", now.Format("2006-01-02T15-04-05")))
+
+	// Build chat content with path patching
 	chatContent := buildGeminiChat(payload.Bundle, id, now)
+	chatContent = pathpatchGeminiPatchPaths(chatContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
 
 	if err := a.fs.WriteFile(chatPath, []byte(chatContent), 0o644); err != nil {
 		return report, err
@@ -91,10 +94,16 @@ func (a *projectAdapter) applyNativeGemini(payload domain.SwitchPayload, plan do
 	report.Session.Files = append(report.Session.Files, chatPath)
 
 	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
+
+	// Apply global skills and MCP
+	report, _ = a.applyGlobalSkills(payload, report)
+	report, _ = a.applyGlobalMCP(payload, report)
+
 	return report, nil
 }
 
 // exportNativeGemini exports the imported session natively to the Gemini storage layout.
+// Note: export does NOT apply global skills/MCP - only apply does that.
 func (a *projectAdapter) exportNativeGemini(payload domain.SwitchPayload, plan domain.SwitchPlan) (domain.ApplyReport, error) {
 	report, err := a.applyPlan(payload, plan)
 	if err != nil {
@@ -151,7 +160,10 @@ func (a *projectAdapter) exportNativeGemini(payload domain.SwitchPayload, plan d
 		id = fmt.Sprintf("session-%s", now.Format("20060102150405"))
 	}
 	chatPath := filepath.Join(chatDir, fmt.Sprintf("session-%s.json", now.Format("2006-01-02T15-04-05")))
+
+	// Build chat content with path patching
 	chatContent := buildGeminiChat(payload.Bundle, id, now)
+	chatContent = pathpatchGeminiPatchPaths(chatContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
 
 	if err := a.fs.WriteFile(chatPath, []byte(chatContent), 0o644); err != nil {
 		return report, err
@@ -194,4 +206,14 @@ func buildGeminiChat(bundle domain.SessionBundle, id string, now time.Time) stri
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	return string(data) + "\n"
+}
+
+// pathpatchGeminiPatchPaths replaces source project root paths with target paths
+// in Gemini session JSON content. This handles absolute paths in tool results
+// and other text content.
+func pathpatchGeminiPatchPaths(content, srcPath, dstPath string) string {
+	if srcPath == "" || srcPath == dstPath {
+		return content
+	}
+	return pathpatch.ReplacePathsInText(content, srcPath, dstPath)
 }

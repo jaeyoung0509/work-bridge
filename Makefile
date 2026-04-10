@@ -29,6 +29,13 @@ fmt:
 tidy:
 	go mod tidy
 
+# Run E2E tests (local only, not in CI)
+test-e2e:
+	@echo "Running E2E tests (local only)..."
+	@echo "These tests build the binary and test real CLI behavior."
+	@echo "Skip if CI=true or GITHUB_ACTIONS=true"
+	go test -tags=e2e ./tests/e2e/... -v
+
 # Create a release binary for the current VERSION.
 # Usage: make release VERSION=v0.1.5
 release: tidy test

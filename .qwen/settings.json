@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go *)",
+      "Bash(git checkout *)",
+      "Bash(opencode *)",
+      "Bash(sqlite3 *)",
+      "Bash(find *)",
+      "Bash(make *)",
+      "Bash(./bin/work-bridge *)",
+      "Bash(git add *)"
+    ]
+  },
+  "$version": 3
+}

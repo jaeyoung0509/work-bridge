@@ -2,3 +2,5 @@ bin/*
 !bin/work-bridge.js
 dist/
 .DS_Store
+
+
