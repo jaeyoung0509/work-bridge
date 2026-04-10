@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-04-10
+
+### Added
+
+- **OpenCode native payload format** — Export payload now matches `opencode export <sessionID>` output structure with `info` + `messages` + `parts` format, ensuring full `opencode import <file>` compatibility
+- **Native mode path patching** — Absolute path substitution across all tools during native session migration:
+  - **Codex**: `session_meta.cwd` + JSONL internal text paths
+  - **Gemini**: Session JSON internal paths
+  - **Claude**: JSONL session file internal paths
+- **Global/user-scope skills migration** — Native mode now installs user-scope skills to target tool directories:
+  - Claude: `~/.claude/skills/`
+  - Codex: `~/.codex/skills/`
+  - OpenCode: `~/.config/opencode/skills/`
+- **OpenCode SQLite fixture tests** — Independent test fixtures using in-memory SQLite DB creation in `internal/importer/opencode_sqlite_test.go` and `internal/inspect/opencode_sqlite_test.go`
+- **E2E test infrastructure** — Local-only E2E tests with `//go:build e2e` tag and `WORKBRIDGE_E2E=1` requirement (excluded from CI):
+  - `tests/e2e/e2e_test.go` — Cross-tool session migration, smoke tests, mode flag validation
+  - `tests/e2e/cross_tool_test.go` — Native mode migration, export/import cycles, global skills validation
+
+### Changed
+
+- **README** — Updated with native mode support details table, project vs native mode comparison, path patching documentation, and global skills/MCP support status
+- **`applyGlobalSkills()` / `applyGlobalMCP()`** — New helper methods in `native_mode.go` for migrating user-scope skills and issuing advisory warnings for global MCP configs
+
 ## [0.1.5] - 2026-04-09
 
 ### Added
@@ -56,6 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Skills and MCP server collection and cross-agent re-emission
 - `.work-bridge/<tool>/` managed project root pattern
 
-[Unreleased]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/jaeyoung0509/work-bridge/releases/tag/v0.1.4
