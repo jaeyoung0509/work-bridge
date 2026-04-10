@@ -8,6 +8,7 @@ import (
 
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
 	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/stringx"
 )
 
 type SkillEntry struct {
@@ -348,7 +349,7 @@ func projectMarkers(fs fsx.FS, dir string, entries []fs.DirEntry) []string {
 		markers = append(markers, "skills")
 	}
 	sort.Strings(markers)
-	return dedupeStrings(markers)
+	return stringx.Dedupe(markers)
 }
 
 func shouldSkipProjectWalkDir(name string) bool {
@@ -374,22 +375,6 @@ func nearestProjectRoot(fs fsx.FS, cwd string) string {
 	}
 }
 
-func dedupeStrings(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(values))
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
-
 func firstParagraph(content string) string {
 	for _, block := range strings.Split(content, "\n\n") {
 		block = strings.TrimSpace(block)
@@ -403,12 +388,5 @@ func firstParagraph(content string) string {
 }
 
 func truncate(value string, n int) string {
-	value = strings.TrimSpace(value)
-	if len(value) <= n {
-		return value
-	}
-	if n <= 3 {
-		return value[:n]
-	}
-	return value[:n-3] + "..."
+	return stringx.Truncate(value, n)
 }

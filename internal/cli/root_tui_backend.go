@@ -27,6 +27,7 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/inspect"
 	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 	"github.com/jaeyoung0509/work-bridge/internal/platform/jsonx"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/stringx"
 	"github.com/jaeyoung0509/work-bridge/internal/tui"
 )
 
@@ -2036,51 +2037,14 @@ func copyDir(fs fsx.FS, src string, dst string) error {
 }
 
 func sanitizeSkillName(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r + ('a' - 'A'))
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	return strings.Trim(b.String(), "-")
+	return stringx.SanitizeName(value)
 }
 
 func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
+	return stringx.FirstNonEmpty(values...)
 }
 
 func dedupeStrings(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(values))
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
+	return stringx.Dedupe(values)
 }
+

@@ -4,17 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"strings"
+
+	"github.com/jaeyoung0509/work-bridge/internal/platform/stringx"
 )
 
 func truncateText(value string, limit int) string {
-	value = strings.TrimSpace(value)
-	if len(value) <= limit {
-		return value
-	}
-	if limit <= 3 {
-		return value[:limit]
-	}
-	return value[:limit-3] + "..."
+	return stringx.Truncate(value, limit)
 }
 
 func splitJSONLLines(data []byte) ([][]byte, error) {
@@ -34,58 +29,9 @@ func splitJSONLLines(data []byte) ([][]byte, error) {
 }
 
 func stringField(raw map[string]any, keys ...string) string {
-	for _, key := range keys {
-		value, ok := raw[key]
-		if !ok {
-			continue
-		}
-		if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
-			return s
-		}
-	}
-	return ""
+	return stringx.StringField(raw, keys...)
 }
 
 func stripJSONCComments(data []byte) []byte {
-	lines := strings.Split(string(data), "\n")
-	if len(lines) == 0 {
-		return data
-	}
-	var b strings.Builder
-	inBlock := false
-	for _, line := range lines {
-		text := line
-		if inBlock {
-			if end := strings.Index(text, "*/"); end >= 0 {
-				inBlock = false
-				text = text[end+2:]
-			} else {
-				continue
-			}
-		}
-		for {
-			start := strings.Index(text, "/*")
-			if start < 0 {
-				break
-			}
-			end := strings.Index(text[start+2:], "*/")
-			if end < 0 {
-				text = text[:start]
-				inBlock = true
-				break
-			}
-			text = text[:start] + text[start+2+end+2:]
-		}
-		if idx := strings.Index(text, "//"); idx >= 0 {
-			text = text[:idx]
-		}
-		text = strings.TrimSpace(text)
-		if text == "" {
-			continue
-		}
-		text = strings.TrimRight(text, ",")
-		b.WriteString(text)
-		b.WriteByte('\n')
-	}
-	return []byte(b.String())
+	return stringx.StripJSONCComments(data)
 }

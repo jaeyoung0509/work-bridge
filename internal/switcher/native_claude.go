@@ -47,7 +47,7 @@ func (a *projectAdapter) applyNativeClaude(payload domain.SwitchPayload, plan do
 
 	// Build session content with path patching
 	sessionContent := buildClaudeRollout(payload.Bundle, plan.ProjectRoot, now)
-	sessionContent = pathpatchClaudePatchPaths(sessionContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
+	sessionContent = pathpatch.ReplacePathsInText(sessionContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
 
 	if err := a.fs.MkdirAll(projectDir, 0o755); err != nil {
 		return report, err
@@ -98,7 +98,7 @@ func (a *projectAdapter) exportNativeClaude(payload domain.SwitchPayload, plan d
 
 	// Build session content with path patching
 	sessionContent := buildClaudeRollout(payload.Bundle, plan.ProjectRoot, now)
-	sessionContent = pathpatchClaudePatchPaths(sessionContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
+	sessionContent = pathpatch.ReplacePathsInText(sessionContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
 
 	if err := a.fs.MkdirAll(projectDir, 0o755); err != nil {
 		return report, err
@@ -162,14 +162,4 @@ func buildClaudeRollout(bundle domain.SessionBundle, projectRoot string, now tim
 		b.WriteString(string(msgData) + "\n")
 	}
 	return b.String()
-}
-
-// pathpatchClaudePatchPaths replaces source project root paths with target paths
-// in Claude session JSONL content. This handles absolute paths in tool results
-// and other text content.
-func pathpatchClaudePatchPaths(content, srcPath, dstPath string) string {
-	if srcPath == "" || srcPath == dstPath {
-		return content
-	}
-	return pathpatch.ReplacePathsInText(content, srcPath, dstPath)
 }

@@ -252,24 +252,3 @@ func inspectOptions(opts Options, tool string) inspect.Options {
 func defaultToolRoot(opts Options, tool domain.Tool) string {
 	return opts.ToolPaths.Dir(tool, opts.HomeDir)
 }
-
-func sortAndCompact(values []string) []string {
-	sort.Strings(values)
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		if len(out) == 0 || out[len(out)-1] != value {
-			out = append(out, value)
-		}
-	}
-	return out
-}
-
-func appendSourceRef(refs []string, value string) []string {
-	if strings.TrimSpace(value) == "" {
-		return refs
-	}
-	return append(refs, value)
-}
