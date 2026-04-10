@@ -46,10 +46,6 @@ func newRawImportResult(tool domain.Tool) RawImportResult {
 	}
 }
 
-type Normalizer interface {
-	Normalize(raw RawImportResult) (domain.SessionBundle, error)
-}
-
 type SessionNormalizer struct{}
 
 func NewSessionNormalizer() SessionNormalizer {

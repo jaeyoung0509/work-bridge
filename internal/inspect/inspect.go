@@ -16,6 +16,7 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/detect"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
 	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/stringx"
 )
 
 type Options struct {
@@ -384,14 +385,7 @@ func inspectClaude(opts Options) ([]Session, []string, error) {
 }
 
 func stringField(raw map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := raw[key]; ok {
-			if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
-				return s
-			}
-		}
-	}
-	return ""
+	return stringx.StringField(raw, keys...)
 }
 
 func anySlice(raw map[string]any, keys ...string) []any {
@@ -408,51 +402,7 @@ func anySlice(raw map[string]any, keys ...string) []any {
 }
 
 func stripJSONCComments(data []byte) []byte {
-	lines := splitLines(data)
-	if len(lines) == 0 {
-		return data
-	}
-	var b strings.Builder
-	inBlock := false
-	for _, line := range lines {
-		text := string(line)
-		trimmed := strings.TrimSpace(text)
-		if trimmed == "" {
-			continue
-		}
-		if inBlock {
-			if end := strings.Index(text, "*/"); end >= 0 {
-				inBlock = false
-				text = text[end+2:]
-			} else {
-				continue
-			}
-		}
-		for {
-			start := strings.Index(text, "/*")
-			if start < 0 {
-				break
-			}
-			end := strings.Index(text[start+2:], "*/")
-			if end < 0 {
-				text = text[:start]
-				inBlock = true
-				break
-			}
-			text = text[:start] + text[start+2+end+2:]
-		}
-		if idx := strings.Index(text, "//"); idx >= 0 {
-			text = text[:idx]
-		}
-		text = strings.TrimSpace(text)
-		if text == "" {
-			continue
-		}
-		text = strings.TrimRight(text, ",")
-		b.WriteString(text)
-		b.WriteByte('\n')
-	}
-	return []byte(b.String())
+	return stringx.StripJSONCComments(data)
 }
 
 func readCodexSessionMeta(fs fsx.FS, path string) (string, string, error) {
@@ -518,11 +468,7 @@ func parseGeminiContent(raw json.RawMessage) string {
 }
 
 func truncate(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) <= 80 {
-		return value
-	}
-	return value[:77] + "..."
+	return stringx.Truncate(value, 80)
 }
 
 func sortSessions(sessions []Session) {

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/stringx"
 	"github.com/jaeyoung0509/work-bridge/internal/switcher"
 )
 
@@ -202,18 +203,5 @@ func parseModeValue(value string) (domain.SwitchMode, error) {
 }
 
 func dedupeText(values []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
+	return stringx.Dedupe(values)
 }

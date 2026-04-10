@@ -16,6 +16,7 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/exporter"
 	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 	"github.com/jaeyoung0509/work-bridge/internal/platform/jsonx"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/stringx"
 )
 
 const (
@@ -834,24 +835,7 @@ func upsertManagedBlock(existing string, block string) string {
 }
 
 func sanitizeSkillName(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r + ('a' - 'A'))
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	return strings.Trim(b.String(), "-")
+	return stringx.SanitizeName(value)
 }
 
 func readinessFromCompatibility(report domain.CompatibilityReport) domain.SwitchState {

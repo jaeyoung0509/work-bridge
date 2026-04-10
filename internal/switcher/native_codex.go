@@ -44,7 +44,7 @@ func (a *projectAdapter) applyNativeCodex(payload domain.SwitchPayload, plan dom
 
 	// Build rollout content with path patching
 	rolloutContent := buildCodexRollout(payload.Bundle, plan.ProjectRoot, now)
-	rolloutContent = pathpatchCodexPatchPaths(rolloutContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
+	rolloutContent = pathpatch.ReplacePathsInText(rolloutContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
 
 	if err := a.fs.MkdirAll(codexSessionsDir, 0o755); err != nil {
 		return report, err
@@ -96,7 +96,7 @@ func (a *projectAdapter) exportNativeCodex(payload domain.SwitchPayload, plan do
 
 	// Build rollout content with path patching
 	rolloutContent := buildCodexRollout(payload.Bundle, plan.ProjectRoot, now)
-	rolloutContent = pathpatchCodexPatchPaths(rolloutContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
+	rolloutContent = pathpatch.ReplacePathsInText(rolloutContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
 
 	if err := a.fs.MkdirAll(codexSessionsDir, 0o755); err != nil {
 		return report, err
@@ -174,15 +174,4 @@ func buildCodexRollout(bundle domain.SessionBundle, projectRoot string, now time
 		b.WriteString(string(msgLineData) + "\n")
 	}
 	return b.String()
-}
-
-// pathpatchCodexPatchPaths replaces source project root paths with target paths
-// in Codex rollout JSONL content. This handles absolute paths in tool results,
-// shell outputs, and other text content.
-func pathpatchCodexPatchPaths(content, srcPath, dstPath string) string {
-	if srcPath == "" || srcPath == dstPath {
-		return content
-	}
-	// Use generic path patching for all text content
-	return pathpatch.ReplacePathsInText(content, srcPath, dstPath)
 }

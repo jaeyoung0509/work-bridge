@@ -85,7 +85,7 @@ func (a *projectAdapter) applyNativeGemini(payload domain.SwitchPayload, plan do
 
 	// Build chat content with path patching
 	chatContent := buildGeminiChat(payload.Bundle, id, now)
-	chatContent = pathpatchGeminiPatchPaths(chatContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
+	chatContent = pathpatch.ReplacePathsInText(chatContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
 
 	if err := a.fs.WriteFile(chatPath, []byte(chatContent), 0o644); err != nil {
 		return report, err
@@ -158,7 +158,7 @@ func (a *projectAdapter) exportNativeGemini(payload domain.SwitchPayload, plan d
 
 	// Build chat content with path patching
 	chatContent := buildGeminiChat(payload.Bundle, id, now)
-	chatContent = pathpatchGeminiPatchPaths(chatContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
+	chatContent = pathpatch.ReplacePathsInText(chatContent, payload.Bundle.ProjectRoot, plan.ProjectRoot)
 
 	if err := a.fs.WriteFile(chatPath, []byte(chatContent), 0o644); err != nil {
 		return report, err
@@ -201,14 +201,4 @@ func buildGeminiChat(bundle domain.SessionBundle, id string, now time.Time) stri
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	return string(data) + "\n"
-}
-
-// pathpatchGeminiPatchPaths replaces source project root paths with target paths
-// in Gemini session JSON content. This handles absolute paths in tool results
-// and other text content.
-func pathpatchGeminiPatchPaths(content, srcPath, dstPath string) string {
-	if srcPath == "" || srcPath == dstPath {
-		return content
-	}
-	return pathpatch.ReplacePathsInText(content, srcPath, dstPath)
 }

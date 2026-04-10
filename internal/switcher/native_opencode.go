@@ -83,7 +83,7 @@ func (a *projectAdapter) exportNativeOpenCode(payload domain.SwitchPayload, plan
 	report.AppliedMode = string(domain.SwitchModeNative)
 
 	now := a.now().UTC()
-	exportPayload := buildOpenCodeExportPayload(payload.Bundle, plan.ProjectRoot, now)
+	exportPayload := buildOpenCodeImportPayload(payload.Bundle, plan.ProjectRoot, now)
 
 	exportPath := filepath.Join(plan.DestinationRoot, ".opencode_export.json")
 	data, err := json.MarshalIndent(exportPayload, "", "  ")
@@ -118,9 +118,9 @@ func (a *projectAdapter) exportNativeOpenCode(payload domain.SwitchPayload, plan
 //	}
 func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string, now time.Time) map[string]any {
 	sessionID := openCodeSessionID(bundle.SourceSessionID, now)
-	title := pathpatchOpenCodeText(bundle.TaskTitle, bundle.ProjectRoot, projectRoot)
-	currentGoal := pathpatchOpenCodeText(bundle.CurrentGoal, bundle.ProjectRoot, projectRoot)
-	summary := pathpatchOpenCodeText(bundle.Summary, bundle.ProjectRoot, projectRoot)
+	title := pathpatch.ReplacePathsInText(bundle.TaskTitle, bundle.ProjectRoot, projectRoot)
+	currentGoal := pathpatch.ReplacePathsInText(bundle.CurrentGoal, bundle.ProjectRoot, projectRoot)
+	summary := pathpatch.ReplacePathsInText(bundle.Summary, bundle.ProjectRoot, projectRoot)
 	model := map[string]any{
 		"providerID": openCodeDefaultProviderID,
 		"modelID":    openCodeDefaultModelID,
@@ -261,19 +261,6 @@ func buildOpenCodeImportPayload(bundle domain.SessionBundle, projectRoot string,
 		"model":    model,
 		"messages": messages,
 	}
-}
-
-// buildOpenCodeExportPayload creates an opencode export-compatible payload for export mode.
-// This is identical to import payload but used for out-of-project export.
-func buildOpenCodeExportPayload(bundle domain.SessionBundle, projectRoot string, now time.Time) map[string]any {
-	return buildOpenCodeImportPayload(bundle, projectRoot, now)
-}
-
-func pathpatchOpenCodeText(value, srcPath, dstPath string) string {
-	if value == "" || srcPath == "" || srcPath == dstPath {
-		return value
-	}
-	return pathpatch.ReplacePathsInText(value, srcPath, dstPath)
 }
 
 func openCodeSessionID(sourceID string, now time.Time) string {

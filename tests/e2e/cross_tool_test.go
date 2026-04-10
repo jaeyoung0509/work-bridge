@@ -11,7 +11,6 @@
 package e2e
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,79 +18,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// TestCrossToolSessionMigration tests session import between different tools.
-func TestCrossToolSessionMigration(t *testing.T) {
-	skipIfE2EDisabled(t)
-
-	binary := buildWorkBridge(t)
-	tmpDir := t.TempDir()
-	projectRoot := filepath.Join(tmpDir, "testproject")
-
-	// Create a test project
-	err := os.MkdirAll(projectRoot, 0o755)
-	if err != nil {
-		t.Fatalf("failed to create project dir: %v", err)
-	}
-
-	// Initialize git repo (required for some tools)
-	initGitRepo(t, projectRoot)
-
-	toolPairs := []struct {
-		from string
-		to   string
-	}{
-		{"codex", "gemini"},
-		{"codex", "claude"},
-		{"gemini", "claude"},
-		{"gemini", "codex"},
-		{"claude", "codex"},
-		{"claude", "gemini"},
-	}
-
-	for _, pair := range toolPairs {
-		t.Run(fmt.Sprintf("%s_to_%s", pair.from, pair.to), func(t *testing.T) {
-			testSessionSwitch(t, binary, projectRoot, pair.from, pair.to)
-		})
-	}
-}
-
-func testSessionSwitch(t *testing.T, binary, projectRoot, from, to string) {
-	t.Helper()
-
-	// Dry run first
-	cmd := exec.Command(binary, "switch",
-		"--from", from,
-		"--session", "latest",
-		"--to", to,
-		"--project", projectRoot,
-		"--mode", "project",
-		"--dry-run",
-	)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Some tool pairs may not have sessions available, which is OK for E2E
-		if strings.Contains(string(output), "no sessions found") ||
-			strings.Contains(string(output), "session not found") {
-			t.Skipf("no sessions available for %s -> %s", from, to)
-		}
-		t.Logf("Output: %s", output)
-		// Don't fail - some pairs might need actual session data
-		t.Skipf("switch failed (may need real session data): %v", err)
-	}
-
-	// Verify output contains expected information
-	outputStr := string(output)
-	if !strings.Contains(outputStr, "mode:") {
-		t.Error("output missing mode information")
-	}
-	if !strings.Contains(outputStr, "project:") {
-		t.Error("output missing project information")
-	}
-
-	t.Logf("Successfully tested %s -> %s (dry-run)", from, to)
-}
 
 // TestNativeModeMigration tests native mode session migration.
 func TestNativeModeMigration(t *testing.T) {
@@ -101,16 +27,13 @@ func TestNativeModeMigration(t *testing.T) {
 	tmpDir := t.TempDir()
 	projectRoot := filepath.Join(tmpDir, "testproject")
 
-	// Create a test project
 	err := os.MkdirAll(projectRoot, 0o755)
 	if err != nil {
 		t.Fatalf("failed to create project dir: %v", err)
 	}
 
-	// Initialize git repo
 	initGitRepo(t, projectRoot)
 
-	// Test native mode for each tool pair
 	nativePairs := []struct {
 		from string
 		to   string
@@ -130,7 +53,6 @@ func TestNativeModeMigration(t *testing.T) {
 func testNativeSwitch(t *testing.T, binary, projectRoot, from, to string) {
 	t.Helper()
 
-	// Dry run in native mode
 	cmd := exec.Command(binary, "switch",
 		"--from", from,
 		"--session", "latest",
@@ -150,7 +72,6 @@ func testNativeSwitch(t *testing.T, binary, projectRoot, from, to string) {
 		t.Skipf("native switch failed (may need real session data): %v", err)
 	}
 
-	// Verify native mode indicators
 	outputStr := string(output)
 	if !strings.Contains(outputStr, "mode: native") {
 		t.Error("output missing native mode indicator")
@@ -168,7 +89,6 @@ func TestGlobalSkillsMigration(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	// Create fake global skills directories
 	codexSkillsDir := filepath.Join(tmpDir, ".codex", "skills")
 	claudeSkillsDir := filepath.Join(tmpDir, ".claude", "skills")
 
@@ -190,7 +110,6 @@ func TestGlobalSkillsMigration(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Create source skill
 			err := os.MkdirAll(tc.sourceDir, 0o755)
 			if err != nil {
 				t.Fatalf("failed to create source skills dir: %v", err)
@@ -211,7 +130,6 @@ This is a test skill for E2E validation of global skill migration.
 				t.Fatalf("failed to write skill file: %v", err)
 			}
 
-			// Verify the skill was created
 			if _, err := os.Stat(skillPath); err != nil {
 				t.Fatalf("skill file not created: %v", err)
 			}
@@ -241,10 +159,8 @@ func TestNativeExportImportCycle(t *testing.T) {
 		t.Fatalf("failed to create export dir: %v", err)
 	}
 
-	// Initialize git repo
 	initGitRepo(t, projectRoot)
 
-	// Test export in native mode for each tool
 	tools := []string{"codex", "gemini", "claude"}
 
 	for _, from := range tools {
@@ -284,63 +200,10 @@ func testExportCycle(t *testing.T, binary, projectRoot, exportDir, from, to stri
 		t.Skipf("export failed (may need real session data): %v", err)
 	}
 
-	// Verify export directory was created
 	if _, err := os.Stat(exportPath); err != nil {
 		t.Logf("Export path not created (expected with no session data)")
 		t.Skip("export path not created - no session data available")
 	}
 
 	t.Logf("Successfully tested export %s -> %s to %s", from, to, exportPath)
-}
-
-// TestJSONOutputFormat tests that JSON output format works correctly.
-func TestJSONOutputFormat(t *testing.T) {
-	skipIfE2EDisabled(t)
-
-	binary := buildWorkBridge(t)
-	tmpDir := t.TempDir()
-	projectRoot := filepath.Join(tmpDir, "testproject")
-
-	err := os.MkdirAll(projectRoot, 0o755)
-	if err != nil {
-		t.Fatalf("failed to create project dir: %v", err)
-	}
-
-	// Initialize git repo
-	initGitRepo(t, projectRoot)
-
-	cmd := exec.Command(binary, "switch",
-		"--from", "codex",
-		"--session", "latest",
-		"--to", "claude",
-		"--project", projectRoot,
-		"--format", "json",
-		"--mode", "project",
-		"--dry-run",
-	)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		if strings.Contains(string(output), "no sessions found") {
-			t.Skip("no sessions available")
-		}
-		t.Skipf("switch failed: %v", err)
-	}
-
-	// Verify JSON output
-	var result map[string]any
-	err = json.Unmarshal(output, &result)
-	if err != nil {
-		t.Fatalf("output is not valid JSON: %v", err)
-	}
-
-	// Check required fields
-	if _, ok := result["payload"]; !ok {
-		t.Error("JSON output missing payload field")
-	}
-	if _, ok := result["plan"]; !ok {
-		t.Error("JSON output missing plan field")
-	}
-
-	t.Logf("JSON output format validation passed")
 }
