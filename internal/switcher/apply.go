@@ -15,6 +15,7 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
 	"github.com/jaeyoung0509/work-bridge/internal/exporter"
 	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
+	"github.com/jaeyoung0509/work-bridge/internal/platform/jsonx"
 )
 
 const (
@@ -63,12 +64,12 @@ func (a *projectAdapter) previewProject(payload domain.SwitchPayload, projectRoo
 	mcpFiles := a.mcpFiles(destinationRoot, managed, payload.MCP)
 
 	plan := domain.SwitchPlan{
-		Mode:          domain.SwitchModeProject,
-		TargetTool:    a.target,
-		ProjectRoot:   projectRoot,
+		Mode:            domain.SwitchModeProject,
+		TargetTool:      a.target,
+		ProjectRoot:     projectRoot,
 		DestinationRoot: destinationRoot,
-		ManagedRoot:   managed,
-		Compatibility: report,
+		ManagedRoot:     managed,
+		Compatibility:   report,
 		Session: domain.SwitchComponentPlan{
 			State:   readinessFromCompatibility(report),
 			Summary: fmt.Sprintf("%d managed session artifacts", len(sessionFiles)),
@@ -214,10 +215,12 @@ func (a *projectAdapter) applyPlan(payload domain.SwitchPayload, plan domain.Swi
 
 	// Post-apply: perform agent-native storage patches (CWD rewrite, index
 	// busting, project registry injection, etc.).
-	if nativeWarnings := a.applyNativePatches(payload, plan); len(nativeWarnings) > 0 {
-		report.Warnings = dedupeStrings(append(report.Warnings, nativeWarnings...))
-		if report.Status == domain.SwitchStateApplied {
-			report.Status = domain.SwitchStatePartial
+	if plan.Mode != domain.SwitchModeNative {
+		if nativeWarnings := a.applyNativePatches(payload, plan); len(nativeWarnings) > 0 {
+			report.Warnings = dedupeStrings(append(report.Warnings, nativeWarnings...))
+			if report.Status == domain.SwitchStateApplied {
+				report.Status = domain.SwitchStatePartial
+			}
 		}
 	}
 
@@ -491,15 +494,8 @@ func (a *projectAdapter) renderTargetConfigJSON(path string, payload domain.MCPP
 	}
 	config := map[string]any{}
 	if existing, err := a.fs.ReadFile(path); err == nil && len(existing) > 0 {
-		switch strings.ToLower(filepath.Ext(path)) {
-		case ".jsonc":
-			if err := json.Unmarshal(stripJSONCComments(existing), &config); err != nil {
-				return "", fmt.Sprintf("skipped native MCP config patch for %s: %v", filepath.Base(path), err), err
-			}
-		default:
-			if err := json.Unmarshal(existing, &config); err != nil {
-				return "", fmt.Sprintf("skipped native MCP config patch for %s: %v", filepath.Base(path), err), err
-			}
+		if err := jsonx.UnmarshalRelaxed(existing, &config); err != nil {
+			return "", fmt.Sprintf("skipped native MCP config patch for %s: %v", filepath.Base(path), err), err
 		}
 	}
 	config[field] = marshalMCPServers(payload.Servers)
