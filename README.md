@@ -62,9 +62,9 @@ The current design is intentionally simpler than the older import/export pipelin
 | History index update | ✅ `history.jsonl` | ✅ `projects.json` | ✅ `session_index.jsonl` | Via `opencode import` |
 | CWD/path patching | ✅ Absolute paths | ✅ Project paths | ✅ `session_meta.cwd` + text | Via payload format |
 | User-scope skills | ✅ `~/.claude/skills/` | ✅ `~/.gemini/GEMINI.md` managed block | ✅ `~/.codex/skills/` | ✅ `~/.config/opencode/skills/` |
-| Global MCP migration | ⚠️ Advisory warning | ⚠️ Advisory warning | ⚠️ Advisory warning | ⚠️ Advisory warning |
+| Global MCP migration | ✅ additive merge | ✅ additive merge | ✅ additive merge | ✅ additive merge |
 
-> **Note on Global MCP**: Automatic migration of user-scope/global MCP server configs is not fully implemented due to tool-specific config format differences (TOML vs JSON vs JSONC). Manual migration recommended.
+> **Note on Global MCP**: Native mode now performs additive merge into the target tool's user-scope config. Existing target entries win on name conflicts, and lossy fields are surfaced as warnings instead of silently overwriting config.
 
 ### When to Use Which Mode
 
@@ -262,7 +262,7 @@ Supported tools:
 Current non-goals:
 
 - no direct SQLite write for OpenCode (uses official CLI delegate for safety)
-- no automatic global MCP config migration (tool-specific format differences require manual handling)
+- no promise that conflicting global MCP entries will be auto-overwritten
 - no promise that every source-specific tool event becomes meaningful in every target
 
 Current behavior to be aware of:
@@ -272,9 +272,11 @@ Current behavior to be aware of:
 - Global/user-scope skills are installed to target tool directories in native mode
   - Claude: `~/.claude/skills/`
   - Codex: `~/.codex/skills/`
-  - OpenCode: `~/.config/opencode/skills/`
+  - OpenCode: `~/.config/opencode/skills/<name>/SKILL.md`
   - Gemini: appended to a managed block inside `~/.gemini/GEMINI.md`
-- Global MCP configs trigger advisory warnings with guidance (manual migration recommended)
+- Global MCP configs are additively merged into target user-scope config files
+  - Existing target entries are preserved on name conflicts
+  - Lossy target conversions, such as unsupported OpenCode `cwd`, are reported as warnings
 - Path patching handles absolute paths in tool results, shell outputs, and text content
 - `--session-only` disables skills and MCP materialization
 - `--dry-run` is the safest first step for new tool pairs

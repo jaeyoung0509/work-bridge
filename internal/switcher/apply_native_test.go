@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	gotoml "github.com/pelletier/go-toml/v2"
+
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
 	"github.com/jaeyoung0509/work-bridge/internal/platform/pathpatch"
 	"github.com/jaeyoung0509/work-bridge/internal/testutil"
@@ -314,6 +316,41 @@ func TestApplyGlobalSkillsSkipsExistingIdenticalSkillWithoutWarning(t *testing.T
 	}
 }
 
+func TestApplyGlobalSkillsOpenCodeWritesCanonicalSkillPath(t *testing.T) {
+	homeDir := t.TempDir()
+	adapter := &projectAdapter{
+		target:  domain.ToolOpenCode,
+		fs:      osFS{},
+		now:     time.Now,
+		homeDir: homeDir,
+	}
+
+	payload := domain.SwitchPayload{
+		Skills: []domain.SkillPayload{{
+			Name:    "reviewer",
+			Scope:   "user",
+			Content: "# Reviewer\n\nCheck changes carefully.\n",
+		}},
+	}
+	report := domain.ApplyReport{
+		Status: domain.SwitchStateApplied,
+		Skills: domain.ApplyComponentResult{State: domain.SwitchStateApplied},
+	}
+
+	report, err := adapter.applyGlobalSkills(payload, report)
+	if err != nil {
+		t.Fatalf("applyGlobalSkills failed: %v", err)
+	}
+
+	targetPath := filepath.Join(homeDir, ".config", "opencode", "skills", "reviewer", "SKILL.md")
+	if _, err := os.Stat(targetPath); err != nil {
+		t.Fatalf("expected opencode global skill at %s: %v", targetPath, err)
+	}
+	if !containsFile(report.FilesUpdated, targetPath) {
+		t.Fatalf("expected %s in FilesUpdated, got %v", targetPath, report.FilesUpdated)
+	}
+}
+
 func TestApplyGlobalMCPIgnoresGlobalSourcesWithoutServers(t *testing.T) {
 	adapter := &projectAdapter{
 		target: domain.ToolCodex,
@@ -342,11 +379,16 @@ func TestApplyGlobalMCPIgnoresGlobalSourcesWithoutServers(t *testing.T) {
 	}
 }
 
-func TestApplyGlobalMCPWarnsWhenParsedGlobalServersExist(t *testing.T) {
+func TestApplyGlobalMCPCodexWritesMergedGlobalConfig(t *testing.T) {
+	homeDir := t.TempDir()
+	targetPath := filepath.Join(homeDir, ".codex", "config.toml")
+	writeFile(t, targetPath, "model = \"gpt-5.4\"\n\n[mcp.servers.existing]\ncommand = \"mcp-existing\"\n")
+
 	adapter := &projectAdapter{
-		target: domain.ToolCodex,
-		fs:     osFS{},
-		now:    time.Now,
+		target:  domain.ToolCodex,
+		fs:      osFS{},
+		now:     time.Now,
+		homeDir: homeDir,
 	}
 
 	payload := domain.SwitchPayload{
@@ -361,17 +403,235 @@ func TestApplyGlobalMCPWarnsWhenParsedGlobalServersExist(t *testing.T) {
 			}},
 		},
 	}
-	report := domain.ApplyReport{Status: domain.SwitchStateApplied}
+	report := domain.ApplyReport{
+		Status: domain.SwitchStateApplied,
+		MCP:    domain.ApplyComponentResult{State: domain.SwitchStateApplied},
+	}
 
 	report, err := adapter.applyGlobalMCP(payload, report)
 	if err != nil {
 		t.Fatalf("applyGlobalMCP failed: %v", err)
 	}
-	if len(report.Warnings) != 1 {
-		t.Fatalf("expected one warning, got %v", report.Warnings)
+
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read codex config failed: %v", err)
 	}
-	if !strings.Contains(report.Warnings[0], "Native global MCP apply is not implemented for codex yet") {
-		t.Fatalf("unexpected warning %q", report.Warnings[0])
+	var decoded map[string]any
+	if err := gotoml.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("parse codex config failed: %v", err)
+	}
+	if decoded["model"] != "gpt-5.4" {
+		t.Fatalf("expected model setting to be preserved, got %#v", decoded["model"])
+	}
+	if !containsFile(report.FilesUpdated, targetPath) {
+		t.Fatalf("expected %s in FilesUpdated, got %v", targetPath, report.FilesUpdated)
+	}
+	if len(report.Warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", report.Warnings)
+	}
+}
+
+func TestApplyGlobalMCPGeminiWritesMergedGlobalConfig(t *testing.T) {
+	homeDir := t.TempDir()
+	targetPath := filepath.Join(homeDir, ".gemini", "settings.json")
+	writeFile(t, targetPath, `{"general":{"previewFeatures":true}}`)
+
+	adapter := &projectAdapter{
+		target:  domain.ToolGemini,
+		fs:      osFS{},
+		now:     time.Now,
+		homeDir: homeDir,
+	}
+
+	payload := domain.SwitchPayload{
+		MCP: domain.MCPPayload{
+			Sources: []domain.MCPSource{{
+				Path:  "/tmp/settings.json",
+				Scope: "user",
+				Servers: []domain.MCPServerConfig{{
+					Name:    "github",
+					Command: "mcp-github",
+				}},
+			}},
+		},
+	}
+
+	report, err := adapter.applyGlobalMCP(payload, domain.ApplyReport{
+		Status: domain.SwitchStateApplied,
+		MCP:    domain.ApplyComponentResult{State: domain.SwitchStateApplied},
+	})
+	if err != nil {
+		t.Fatalf("applyGlobalMCP failed: %v", err)
+	}
+
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read gemini config failed: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("parse gemini config failed: %v", err)
+	}
+	if _, ok := decoded["general"].(map[string]any); !ok {
+		t.Fatalf("expected existing general section to be preserved, got %#v", decoded["general"])
+	}
+	servers, ok := decoded["mcpServers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected mcpServers block, got %#v", decoded["mcpServers"])
+	}
+	if _, ok := servers["github"].(map[string]any); !ok {
+		t.Fatalf("expected github server entry, got %#v", servers["github"])
+	}
+	if !containsFile(report.FilesUpdated, targetPath) {
+		t.Fatalf("expected %s in FilesUpdated, got %v", targetPath, report.FilesUpdated)
+	}
+}
+
+func TestApplyGlobalMCPOpenCodeWritesMcpSection(t *testing.T) {
+	homeDir := t.TempDir()
+	targetPath := filepath.Join(homeDir, ".config", "opencode", "opencode.jsonc")
+	writeFile(t, targetPath, "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"provider\": {\n    \"ollama\": {}\n  },\n}\n")
+
+	adapter := &projectAdapter{
+		target:  domain.ToolOpenCode,
+		fs:      osFS{},
+		now:     time.Now,
+		homeDir: homeDir,
+	}
+
+	payload := domain.SwitchPayload{
+		MCP: domain.MCPPayload{
+			Sources: []domain.MCPSource{{
+				Path:  "/tmp/opencode.json",
+				Scope: "user",
+				Servers: []domain.MCPServerConfig{{
+					Name:    "github",
+					Command: "mcp-github",
+					Args:    []string{"stdio"},
+				}},
+			}},
+		},
+	}
+
+	report, err := adapter.applyGlobalMCP(payload, domain.ApplyReport{
+		Status: domain.SwitchStateApplied,
+		MCP:    domain.ApplyComponentResult{State: domain.SwitchStateApplied},
+	})
+	if err != nil {
+		t.Fatalf("applyGlobalMCP failed: %v", err)
+	}
+
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read opencode config failed: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("parse opencode config failed: %v", err)
+	}
+	if _, ok := decoded["provider"].(map[string]any); !ok {
+		t.Fatalf("expected provider section to be preserved, got %#v", decoded["provider"])
+	}
+	if _, exists := decoded["mcpServers"]; exists {
+		t.Fatalf("did not expect mcpServers key in opencode config: %#v", decoded)
+	}
+	servers, ok := decoded["mcp"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected mcp block, got %#v", decoded["mcp"])
+	}
+	github, ok := servers["github"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected github server entry, got %#v", servers["github"])
+	}
+	if github["type"] != "local" {
+		t.Fatalf("expected local MCP type, got %#v", github["type"])
+	}
+	if !containsFile(report.FilesUpdated, targetPath) {
+		t.Fatalf("expected %s in FilesUpdated, got %v", targetPath, report.FilesUpdated)
+	}
+}
+
+func TestApplyGlobalMCPSkipsConflictingExistingServerWithWarning(t *testing.T) {
+	homeDir := t.TempDir()
+	targetPath := filepath.Join(homeDir, ".gemini", "settings.json")
+	writeFile(t, targetPath, `{"mcpServers":{"github":{"command":"mcp-existing"}}}`)
+
+	adapter := &projectAdapter{
+		target:  domain.ToolGemini,
+		fs:      osFS{},
+		now:     time.Now,
+		homeDir: homeDir,
+	}
+
+	payload := domain.SwitchPayload{
+		MCP: domain.MCPPayload{
+			Sources: []domain.MCPSource{{
+				Path:  "/tmp/settings.json",
+				Scope: "user",
+				Servers: []domain.MCPServerConfig{{
+					Name:    "github",
+					Command: "mcp-github",
+				}},
+			}},
+		},
+	}
+
+	report, err := adapter.applyGlobalMCP(payload, domain.ApplyReport{
+		Status: domain.SwitchStateApplied,
+		MCP:    domain.ApplyComponentResult{State: domain.SwitchStateApplied},
+	})
+	if err != nil {
+		t.Fatalf("applyGlobalMCP failed: %v", err)
+	}
+	if len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0], "already exists in the target config") {
+		t.Fatalf("expected conflict warning, got %v", report.Warnings)
+	}
+
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read gemini config failed: %v", err)
+	}
+	if !strings.Contains(string(data), "mcp-existing") {
+		t.Fatalf("expected existing MCP server to be preserved, got %s", string(data))
+	}
+}
+
+func TestRenderTargetConfigJSONOpenCodeUsesMcpKey(t *testing.T) {
+	homeDir := t.TempDir()
+	targetPath := filepath.Join(homeDir, ".opencode", "opencode.jsonc")
+	writeFile(t, targetPath, `{"$schema":"https://opencode.ai/config.json"}`)
+
+	adapter := &projectAdapter{
+		target:  domain.ToolOpenCode,
+		fs:      osFS{},
+		now:     time.Now,
+		homeDir: homeDir,
+	}
+
+	content, warning, err := adapter.renderTargetConfigJSON(targetPath, domain.MCPPayload{
+		Servers: map[string]domain.MCPServerConfig{
+			"github": {Name: "github", Command: "mcp-github"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTargetConfigJSON failed: %v", err)
+	}
+	if warning != "" {
+		t.Fatalf("expected no warning, got %q", warning)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(content), &decoded); err != nil {
+		t.Fatalf("parse rendered config failed: %v", err)
+	}
+	if _, exists := decoded["mcpServers"]; exists {
+		t.Fatalf("did not expect mcpServers key, got %#v", decoded)
+	}
+	if _, exists := decoded["mcp_servers"]; exists {
+		t.Fatalf("did not expect mcp_servers key, got %#v", decoded)
+	}
+	if _, ok := decoded["mcp"].(map[string]any); !ok {
+		t.Fatalf("expected mcp key, got %#v", decoded["mcp"])
 	}
 }
 
