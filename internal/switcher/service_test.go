@@ -86,7 +86,7 @@ func TestApplyWritesProjectNativeStateAndIsIdempotent(t *testing.T) {
 		filepath.Join(fixture.WorkspaceDir, ".work-bridge", "claude", "MEMORY_NOTE.md"),
 		filepath.Join(fixture.WorkspaceDir, ".work-bridge", "claude", "STARTER_PROMPT.md"),
 		filepath.Join(fixture.WorkspaceDir, ".work-bridge", "claude", "manifest.json"),
-		filepath.Join(fixture.WorkspaceDir, ".work-bridge", "claude", "skills", "index.json"),
+		filepath.Join(fixture.WorkspaceDir, ".claude", "skills", "project-helper", "SKILL.md"),
 		filepath.Join(fixture.WorkspaceDir, ".work-bridge", "claude", "mcp.json"),
 		filepath.Join(fixture.WorkspaceDir, "CLAUDE.md"),
 		filepath.Join(fixture.WorkspaceDir, ".claude", "settings.local.json"),
@@ -145,7 +145,7 @@ func TestApplyHonorsSessionOnlyAndCodexSkipsConfigPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session-only apply setup failed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(fixture.WorkspaceDir, ".work-bridge", "gemini", "skills", "index.json")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(fixture.WorkspaceDir, ".agents", "skills", "user-helper", "SKILL.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("did not expect session-only skill export, got err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(fixture.WorkspaceDir, ".work-bridge", "gemini", "mcp.json")); !errors.Is(err, os.ErrNotExist) {
@@ -226,7 +226,7 @@ func TestExportWritesTargetReadyTreeOutsideProject(t *testing.T) {
 		filepath.Join(outRoot, ".work-bridge", "claude", "MEMORY_NOTE.md"),
 		filepath.Join(outRoot, ".work-bridge", "claude", "STARTER_PROMPT.md"),
 		filepath.Join(outRoot, ".work-bridge", "claude", "manifest.json"),
-		filepath.Join(outRoot, ".work-bridge", "claude", "skills", "index.json"),
+		filepath.Join(outRoot, ".claude", "skills", "project-helper", "SKILL.md"),
 		filepath.Join(outRoot, ".work-bridge", "claude", "mcp.json"),
 		filepath.Join(outRoot, "CLAUDE.md"),
 		filepath.Join(outRoot, ".claude", "settings.local.json"),
@@ -261,7 +261,7 @@ func newTestService(fixture testutil.Fixture) *Service {
 
 func seedSwitchAssets(t *testing.T, fixture testutil.Fixture) {
 	t.Helper()
-	writeFile(t, filepath.Join(fixture.WorkspaceDir, "skills", "project-helper", "SKILL.md"), "# project-helper\n\nProject helper")
+	writeFile(t, filepath.Join(fixture.WorkspaceDir, ".agents", "skills", "project-helper", "SKILL.md"), "# project-helper\n\nProject helper")
 	writeFile(t, filepath.Join(fixture.HomeDir, ".claude", "skills", "user-helper", "SKILL.md"), "# user-helper\n\nUser helper")
 	writeFile(t, filepath.Join(fixture.WorkspaceDir, ".gemini", "settings.json"), `{"mcpServers":{"github":{"command":"mcp-github"}}}`)
 	writeFile(t, filepath.Join(fixture.HomeDir, ".claude", "settings.json"), `{"mcpServers":{"slack":{"command":"mcp-slack"}}}`)
@@ -277,6 +277,7 @@ func (osFS) Stat(name string) (os.FileInfo, error)                     { return 
 func (osFS) ReadDir(name string) ([]os.DirEntry, error)                { return os.ReadDir(name) }
 func (osFS) MkdirAll(path string, perm os.FileMode) error              { return os.MkdirAll(path, perm) }
 func (osFS) Remove(name string) error                                  { return os.Remove(name) }
+func (osFS) RemoveAll(path string) error                               { return os.RemoveAll(path) }
 
 
 func writeFile(t *testing.T, path string, body string) {

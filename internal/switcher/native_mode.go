@@ -1,9 +1,7 @@
 package switcher
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -65,7 +63,7 @@ func (a *projectAdapter) applyGlobalSkills(payload domain.SwitchPayload, report 
 	// Filter user-scope/global skills
 	globalSkills := make([]domain.SkillPayload, 0)
 	for _, skill := range payload.Skills {
-		if skill.Scope == "user" || skill.Scope == "global" {
+		if skill.Scope == "user" || skill.Scope == "global" || skill.Scope == "admin" {
 			globalSkills = append(globalSkills, skill)
 		}
 	}
@@ -74,11 +72,6 @@ func (a *projectAdapter) applyGlobalSkills(payload domain.SwitchPayload, report 
 		return report, nil
 	}
 
-	if a.target == domain.ToolGemini {
-		return a.applyGeminiGlobalSkills(globalSkills, report)
-	}
-
-	// Install to target tool's user-scope skill directory
 	targetSkillDir := a.globalSkillDir()
 	if targetSkillDir == "" {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("Global skills not supported for %s", a.target))
@@ -99,42 +92,18 @@ func (a *projectAdapter) applyGlobalSkills(payload domain.SwitchPayload, report 
 		if used[slug] > 1 {
 			slug = fmt.Sprintf("%s-%d", slug, used[slug])
 		}
-		targetPath, candidatePaths := a.globalSkillPaths(targetSkillDir, slug)
-
-		shouldWrite := true
-		for _, candidatePath := range candidatePaths {
-			existing, err := a.fs.ReadFile(candidatePath)
-			if err == nil {
-				if normalizeSkillContent(string(existing)) == normalizeSkillContent(skill.Content) {
-					shouldWrite = false
-					break
-				}
-				report.Warnings = append(report.Warnings, fmt.Sprintf("Skill %q already exists with different content at %s; leaving the existing file unchanged", skill.Name, candidatePath))
-				shouldWrite = false
-				break
-			}
-			if !errors.Is(err, fs.ErrNotExist) {
-				return report, fmt.Errorf("stat global skill %s: %w", candidatePath, err)
-			}
-		}
-		if !shouldWrite {
-			continue
-		}
-
-		changed, backup, err := a.writeFile(targetPath, skill.Content)
+		targetDir := filepath.Join(targetSkillDir, slug)
+		changed, backup, err := a.writeSkillBundle(targetDir, skill)
 		if err != nil {
-			return report, fmt.Errorf("write global skill %s: %w", targetPath, err)
-		}
-		if !changed {
-			continue
+			return report, fmt.Errorf("write global skill %s: %w", targetDir, err)
 		}
 
-		report.FilesUpdated = append(report.FilesUpdated, targetPath)
-		report.Skills.Files = append(report.Skills.Files, targetPath)
-		if backup != "" {
-			report.BackupsCreated = append(report.BackupsCreated, backup)
+		report.FilesUpdated = append(report.FilesUpdated, changed...)
+		report.Skills.Files = append(report.Skills.Files, changed...)
+		report.BackupsCreated = append(report.BackupsCreated, backup...)
+		if len(changed) > 0 {
+			installed++
 		}
-		installed++
 	}
 
 	if installed > 0 && report.Skills.Summary == "" {
@@ -242,17 +211,6 @@ func collectGlobalMCPServers(sources []domain.MCPSource) (map[string]domain.MCPS
 	return servers, dedupeStrings(warnings)
 }
 
-func (a *projectAdapter) globalSkillPaths(targetSkillDir string, slug string) (string, []string) {
-	switch a.target {
-	case domain.ToolOpenCode:
-		primary := filepath.Join(targetSkillDir, slug, "SKILL.md")
-		return primary, []string{primary, filepath.Join(targetSkillDir, slug+".md")}
-	default:
-		primary := filepath.Join(targetSkillDir, slug+".md")
-		return primary, []string{primary, filepath.Join(targetSkillDir, slug, "SKILL.md")}
-	}
-}
-
 func (a *projectAdapter) globalMCPConfigPath() string {
 	switch a.target {
 	case domain.ToolCodex:
@@ -301,64 +259,13 @@ func (a *projectAdapter) applyNativeGlobalArtifacts(payload domain.SwitchPayload
 // Returns empty string if not supported.
 func (a *projectAdapter) globalSkillDir() string {
 	switch a.target {
-	case domain.ToolCodex:
-		return filepath.Join(a.toolPaths.Dir(domain.ToolCodex, a.homeDir), "skills")
+	case domain.ToolCodex, domain.ToolGemini:
+		return filepath.Join(a.homeDir, ".agents", "skills")
 	case domain.ToolClaude:
 		return filepath.Join(a.toolPaths.Dir(domain.ToolClaude, a.homeDir), "skills")
 	case domain.ToolOpenCode:
 		return filepath.Join(a.homeDir, ".config", "opencode", "skills")
 	default:
-		// Gemini doesn't have a standard user-scope skill directory
 		return ""
 	}
-}
-
-func (a *projectAdapter) applyGeminiGlobalSkills(skills []domain.SkillPayload, report domain.ApplyReport) (domain.ApplyReport, error) {
-	targetPath := filepath.Join(a.toolPaths.Dir(domain.ToolGemini, a.homeDir), "GEMINI.md")
-	existing, _ := a.fs.ReadFile(targetPath)
-	next := upsertManagedBlock(string(existing), renderGeminiGlobalSkillsBlock(skills))
-
-	changed, backup, err := a.writeFile(targetPath, next)
-	if err != nil {
-		return report, fmt.Errorf("write gemini global skills %s: %w", targetPath, err)
-	}
-	if changed {
-		report.FilesUpdated = append(report.FilesUpdated, targetPath)
-		report.Skills.Files = append(report.Skills.Files, targetPath)
-	}
-	if backup != "" {
-		report.BackupsCreated = append(report.BackupsCreated, backup)
-	}
-
-	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
-	report.BackupsCreated = dedupeStrings(report.BackupsCreated)
-	report.Skills.Files = dedupeStrings(report.Skills.Files)
-	return report, nil
-}
-
-func renderGeminiGlobalSkillsBlock(skills []domain.SkillPayload) string {
-	lines := []string{
-		managedBlockStart,
-		"## work-bridge imported global skills",
-	}
-	for _, skill := range skills {
-		name := strings.TrimSpace(skill.Name)
-		if name == "" {
-			name = "Imported Skill"
-		}
-		lines = append(lines, "", "### "+name)
-		if description := strings.TrimSpace(skill.Description); description != "" {
-			lines = append(lines, "", description)
-		}
-		content := strings.TrimSpace(skill.Content)
-		if content != "" {
-			lines = append(lines, "", content)
-		}
-	}
-	lines = append(lines, managedBlockEnd, "")
-	return strings.Join(lines, "\n")
-}
-
-func normalizeSkillContent(content string) string {
-	return strings.TrimSpace(content)
 }

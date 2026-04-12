@@ -80,6 +80,10 @@ func New(opts Options) *Service {
 	if now == nil {
 		now = time.Now
 	}
+	lookPath := opts.LookPath
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
 	runCmd := opts.RunCmd
 	if runCmd == nil {
 		runCmd = defaultCommandRunner
@@ -90,7 +94,7 @@ func New(opts Options) *Service {
 		homeDir:   opts.HomeDir,
 		toolPaths: opts.ToolPaths,
 		redaction: opts.Redaction,
-		lookPath:  opts.LookPath,
+		lookPath:  lookPath,
 		runCmd:    runCmd,
 		now:       now,
 	}
@@ -417,26 +421,23 @@ func (s *Service) collectSkills(projectRoot string) ([]domain.SkillPayload, erro
 	}
 	skills := make([]domain.SkillPayload, 0, len(entries))
 	for _, entry := range entries {
-		if entry.Scope == "project" && !pathWithinRoot(entry.Path, projectRoot) {
+		if entry.Scope == "project" && !pathWithinRoot(entry.RootPath, projectRoot) {
 			continue
-		}
-		data, err := s.fs.ReadFile(entry.Path)
-		if err != nil {
-			return nil, err
 		}
 		skills = append(skills, domain.SkillPayload{
 			Name:        entry.Name,
 			Description: entry.Description,
-			Path:        entry.Path,
+			RootPath:    entry.RootPath,
+			EntryPath:   entry.EntryPath,
+			Files:       append([]string{}, entry.Files...),
 			Scope:       entry.Scope,
 			Tool:        domain.Tool(entry.Tool),
-			Content:     string(data),
 		})
 	}
 	sort.SliceStable(skills, func(i, j int) bool {
 		if skills[i].Name == skills[j].Name {
 			if skills[i].Scope == skills[j].Scope {
-				return skills[i].Path < skills[j].Path
+				return skills[i].EntryPath < skills[j].EntryPath
 			}
 			return skills[i].Scope < skills[j].Scope
 		}

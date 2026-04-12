@@ -12,12 +12,15 @@ import (
 )
 
 type SkillEntry struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Path        string `json:"path"`
-	Source      string `json:"source"`
-	Scope       string `json:"scope,omitempty"`
-	Tool        string `json:"tool,omitempty"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	RootPath    string   `json:"root_path"`
+	EntryPath   string   `json:"entry_path"`
+	Path        string   `json:"path"`
+	Files       []string `json:"files,omitempty"`
+	Source      string   `json:"source"`
+	Scope       string   `json:"scope,omitempty"`
+	Tool        string   `json:"tool,omitempty"`
 }
 
 type MCPEntry struct {
@@ -36,28 +39,83 @@ type ProjectEntry struct {
 }
 
 func ScanSkills(fs fsx.FS, cwd, homeDir string) ([]SkillEntry, error) {
+	repoRoot := nearestProjectRoot(fs, cwd)
+	projectDirs := skillDiscoveryWalk(cwd, repoRoot)
 	roots := []struct {
 		Path   string
 		Source string
 		Scope  string
 		Tool   string
-	}{
-		{Path: filepath.Join(cwd, ".github", "skills"), Source: "project .github/skills", Scope: "project"},
-		{Path: filepath.Join(cwd, "skills"), Source: "project skills", Scope: "project"},
-		{Path: filepath.Join(homeDir, ".codex", "skills"), Source: "codex user", Scope: "user", Tool: "codex"},
-		{Path: filepath.Join(homeDir, ".claude", "skills"), Source: "claude user", Scope: "user", Tool: "claude"},
-		{Path: filepath.Join(homeDir, ".config", "opencode", "skills"), Source: "opencode user", Scope: "user", Tool: "opencode"},
-		{Path: filepath.Join(homeDir, ".local", "share", "opencode", "skills"), Source: "opencode global", Scope: "global", Tool: "opencode"},
+	}{}
+	for _, dir := range projectDirs {
+		roots = append(roots,
+			struct {
+				Path   string
+				Source string
+				Scope  string
+				Tool   string
+			}{Path: filepath.Join(dir, ".agents", "skills"), Source: "project .agents/skills", Scope: "project"},
+			struct {
+				Path   string
+				Source string
+				Scope  string
+				Tool   string
+			}{Path: filepath.Join(dir, ".gemini", "skills"), Source: "project .gemini/skills", Scope: "project", Tool: "gemini"},
+			struct {
+				Path   string
+				Source string
+				Scope  string
+				Tool   string
+			}{Path: filepath.Join(dir, ".claude", "skills"), Source: "project .claude/skills", Scope: "project", Tool: "claude"},
+			struct {
+				Path   string
+				Source string
+				Scope  string
+				Tool   string
+			}{Path: filepath.Join(dir, ".opencode", "skills"), Source: "project .opencode/skills", Scope: "project", Tool: "opencode"},
+		)
 	}
+	roots = append(roots,
+		struct {
+			Path   string
+			Source string
+			Scope  string
+			Tool   string
+		}{Path: filepath.Join(homeDir, ".agents", "skills"), Source: "user .agents/skills", Scope: "user"},
+		struct {
+			Path   string
+			Source string
+			Scope  string
+			Tool   string
+		}{Path: filepath.Join(homeDir, ".gemini", "skills"), Source: "user .gemini/skills", Scope: "user", Tool: "gemini"},
+		struct {
+			Path   string
+			Source string
+			Scope  string
+			Tool   string
+		}{Path: filepath.Join(homeDir, ".claude", "skills"), Source: "user .claude/skills", Scope: "user", Tool: "claude"},
+		struct {
+			Path   string
+			Source string
+			Scope  string
+			Tool   string
+		}{Path: filepath.Join(homeDir, ".config", "opencode", "skills"), Source: "user opencode skills", Scope: "user", Tool: "opencode"},
+		struct {
+			Path   string
+			Source string
+			Scope  string
+			Tool   string
+		}{Path: filepath.Join(string(filepath.Separator), "etc", "codex", "skills"), Source: "admin codex skills", Scope: "admin", Tool: "codex"},
+	)
 
 	entries := []SkillEntry{}
 	for _, root := range roots {
-		files, err := listSkillFiles(fs, root.Path)
+		bundles, err := listSkillBundles(fs, root.Path)
 		if err != nil {
 			return nil, err
 		}
-		for _, path := range files {
-			entry := parseSkillEntry(fs, path, root.Path, root.Source, root.Scope, root.Tool)
+		for _, bundle := range bundles {
+			entry := parseSkillEntry(fs, bundle, root.Path, root.Source, root.Scope, root.Tool)
 			if entry.Name == "" {
 				continue
 			}
@@ -67,7 +125,7 @@ func ScanSkills(fs fsx.FS, cwd, homeDir string) ([]SkillEntry, error) {
 
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Name == entries[j].Name {
-			return entries[i].Path < entries[j].Path
+			return entries[i].EntryPath < entries[j].EntryPath
 		}
 		return entries[i].Name < entries[j].Name
 	})
@@ -135,8 +193,14 @@ func ScanProjects(fs fsx.FS, roots []string) ([]ProjectEntry, error) {
 	return entries, nil
 }
 
-func parseSkillEntry(fs fsx.FS, path string, root string, source string, scope string, tool string) SkillEntry {
-	data, err := fs.ReadFile(path)
+type skillBundle struct {
+	RootPath  string
+	EntryPath string
+	Files     []string
+}
+
+func parseSkillEntry(fs fsx.FS, bundle skillBundle, root string, source string, scope string, tool string) SkillEntry {
+	data, err := fs.ReadFile(bundle.EntryPath)
 	if err != nil {
 		return SkillEntry{}
 	}
@@ -161,86 +225,139 @@ func parseSkillEntry(fs fsx.FS, path string, root string, source string, scope s
 	}
 
 	if name == "" {
-		switch filepath.Base(path) {
-		case "SKILL.md":
-			name = filepath.Base(filepath.Dir(path))
-		default:
-			name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-		}
+		name = filepath.Base(bundle.RootPath)
 	}
 	if description == "" {
 		description = firstParagraph(content)
 	}
 	if source == "" {
-		source = relativeSource(root, path)
+		source = relativeSource(root, bundle.RootPath)
 	}
 	return SkillEntry{
 		Name:        name,
 		Description: truncate(description, 140),
-		Path:        path,
+		RootPath:    bundle.RootPath,
+		EntryPath:   bundle.EntryPath,
+		Path:        bundle.EntryPath,
+		Files:       append([]string{}, bundle.Files...),
 		Source:      source,
 		Scope:       scope,
 		Tool:        tool,
 	}
 }
 
-func listSkillFiles(fs fsx.FS, root string) ([]string, error) {
+func listSkillBundles(fs fsx.FS, root string) ([]skillBundle, error) {
 	info, err := fs.Stat(root)
 	if err != nil {
 		return nil, nil
 	}
 	if !info.IsDir() {
-		if isSkillFile(filepath.Dir(root), root) {
-			return []string{root}, nil
-		}
 		return nil, nil
 	}
 
-	files := []string{}
+	entryPath := filepath.Join(root, "SKILL.md")
+	if info, err := fs.Stat(entryPath); err == nil && !info.IsDir() {
+		files, err := listBundleFiles(fs, root)
+		if err != nil {
+			return nil, err
+		}
+		return []skillBundle{{
+			RootPath:  root,
+			EntryPath: entryPath,
+			Files:     files,
+		}}, nil
+	}
+
+	bundles := []skillBundle{}
 	entries, err := fs.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
 	for _, entry := range entries {
 		path := filepath.Join(root, entry.Name())
+		if !entry.IsDir() {
+			continue
+		}
+		nested, err := listSkillBundles(fs, path)
+		if err != nil {
+			return nil, err
+		}
+		bundles = append(bundles, nested...)
+	}
+	return bundles, nil
+}
+
+func listBundleFiles(fs fsx.FS, root string) ([]string, error) {
+	entries, err := fs.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	files := []string{}
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
 		if entry.IsDir() {
-			nested, err := listSkillFiles(fs, path)
+			nested, err := listBundleFiles(fs, path)
 			if err != nil {
 				return nil, err
 			}
 			files = append(files, nested...)
 			continue
 		}
-		if isSkillFile(root, path) {
-			files = append(files, path)
-		}
+		files = append(files, path)
 	}
+	sort.Strings(files)
 	return files, nil
 }
 
-func isSkillFile(root string, path string) bool {
-	base := filepath.Base(path)
-	if base == "SKILL.md" {
-		return true
-	}
-	if !strings.HasSuffix(strings.ToLower(base), ".md") || strings.HasPrefix(base, ".") {
-		return false
-	}
-	return filepath.Dir(path) == root
-}
-
 func dedupeSkills(entries []SkillEntry) []SkillEntry {
-	seen := map[string]struct{}{}
-	out := make([]SkillEntry, 0, len(entries))
+	selected := map[string]SkillEntry{}
 	for _, entry := range entries {
-		key := strings.ToLower(entry.Name) + "|" + entry.Path
-		if _, ok := seen[key]; ok {
-			continue
+		key := strings.ToLower(entry.Scope) + "|" + strings.ToLower(entry.Name)
+		current, ok := selected[key]
+		if !ok || skillEntryPriority(entry) < skillEntryPriority(current) || (skillEntryPriority(entry) == skillEntryPriority(current) && entry.EntryPath < current.EntryPath) {
+			selected[key] = entry
 		}
-		seen[key] = struct{}{}
+	}
+	out := make([]SkillEntry, 0, len(selected))
+	for _, entry := range selected {
 		out = append(out, entry)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			return out[i].EntryPath < out[j].EntryPath
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out
+}
+
+func skillEntryPriority(entry SkillEntry) int {
+	switch {
+	case strings.Contains(entry.RootPath, string(filepath.Separator)+".agents"+string(filepath.Separator)+"skills"):
+		if entry.Scope == "project" {
+			return 0
+		}
+		return 10
+	case strings.Contains(entry.RootPath, string(filepath.Separator)+".gemini"+string(filepath.Separator)+"skills"):
+		if entry.Scope == "project" {
+			return 1
+		}
+		return 11
+	case strings.Contains(entry.RootPath, string(filepath.Separator)+".claude"+string(filepath.Separator)+"skills"):
+		if entry.Scope == "project" {
+			return 2
+		}
+		return 12
+	case strings.Contains(entry.RootPath, string(filepath.Separator)+".opencode"+string(filepath.Separator)+"skills"):
+		if entry.Scope == "project" {
+			return 3
+		}
+		return 13
+	case entry.Scope == "admin":
+		return 20
+	default:
+		return 30
+	}
 }
 
 func exists(fs fsx.FS, path string) bool {
@@ -341,15 +458,45 @@ func projectMarkers(fs fsx.FS, dir string, entries []fs.DirEntry) []string {
 			markers = append(markers, "gemini")
 		case entry.IsDir() && name == ".opencode":
 			markers = append(markers, "opencode")
-		case entry.IsDir() && name == "skills":
+		case entry.IsDir() && name == ".agents":
 			markers = append(markers, "skills")
 		}
 	}
-	if info, err := fs.Stat(filepath.Join(dir, ".github", "skills")); err == nil && info.IsDir() {
-		markers = append(markers, "skills")
+	for _, skillPath := range []string{
+		filepath.Join(dir, ".agents", "skills"),
+		filepath.Join(dir, ".gemini", "skills"),
+		filepath.Join(dir, ".claude", "skills"),
+		filepath.Join(dir, ".opencode", "skills"),
+	} {
+		if info, err := fs.Stat(skillPath); err == nil && info.IsDir() {
+			markers = append(markers, "skills")
+			break
+		}
 	}
 	sort.Strings(markers)
 	return stringx.Dedupe(markers)
+}
+
+func skillDiscoveryWalk(cwd string, repoRoot string) []string {
+	current := filepath.Clean(cwd)
+	repoRoot = filepath.Clean(repoRoot)
+	roots := []string{}
+	seen := map[string]struct{}{}
+	for {
+		if _, ok := seen[current]; !ok {
+			seen[current] = struct{}{}
+			roots = append(roots, current)
+		}
+		if current == repoRoot {
+			break
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return roots
 }
 
 func shouldSkipProjectWalkDir(name string) bool {

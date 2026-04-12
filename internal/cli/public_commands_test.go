@@ -154,7 +154,7 @@ func TestExportCommandWritesTargetReadyFiles(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join(outRoot, ".work-bridge", "claude", "manifest.json"),
 		filepath.Join(outRoot, ".work-bridge", "claude", "mcp.json"),
-		filepath.Join(outRoot, ".work-bridge", "claude", "skills", "index.json"),
+		filepath.Join(outRoot, ".claude", "skills", "project-helper", "SKILL.md"),
 		filepath.Join(outRoot, "CLAUDE.md"),
 		filepath.Join(outRoot, ".claude", "settings.local.json"),
 	} {

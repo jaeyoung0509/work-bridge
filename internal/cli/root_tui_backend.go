@@ -152,12 +152,15 @@ func (a *App) loadWorkspaceSnapshot(ctx context.Context) (tui.WorkspaceSnapshot,
 			skill := tui.SkillEntry{
 				Name:        entry.Name,
 				Description: entry.Description,
+				RootPath:    entry.RootPath,
+				EntryPath:   entry.EntryPath,
 				Path:        entry.Path,
+				Files:       append([]string{}, entry.Files...),
 				Source:      entry.Source,
 				Scope:       entry.Scope,
 				Tool:        domain.Tool(entry.Tool),
 			}
-			if data, readErr := a.fs.ReadFile(entry.Path); readErr == nil {
+			if data, readErr := a.fs.ReadFile(entry.EntryPath); readErr == nil {
 				skill.Content = string(data)
 			}
 			skills = append(skills, skill)
@@ -1979,7 +1982,7 @@ func toolBinary(tool domain.Tool) string {
 func (a *App) installSkillFromTUI(ctx context.Context, entry tui.SkillEntry, target tui.SkillTarget) (tui.SkillInstallResult, error) {
 	_ = ctx
 
-	srcDir := filepath.Dir(entry.Path)
+	srcDir := firstNonEmpty(entry.RootPath, filepath.Dir(entry.Path))
 	targetPath := filepath.Clean(target.Path)
 	if strings.TrimSpace(targetPath) == "" {
 		return tui.SkillInstallResult{}, fmt.Errorf("skill target path is required")
@@ -2047,4 +2050,3 @@ func firstNonEmpty(values ...string) string {
 func dedupeStrings(values []string) []string {
 	return stringx.Dedupe(values)
 }
-

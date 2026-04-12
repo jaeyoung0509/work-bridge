@@ -166,10 +166,10 @@ func TestNativePatchGemini_ProjectRootFileCreated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Gemini native patch: projects.json injection
+// Gemini project patch: does not touch projects.json
 // ---------------------------------------------------------------------------
 
-func TestNativePatchGemini_ProjectsJSONInjected(t *testing.T) {
+func TestProjectPatchGemini_DoesNotTouchProjectsJSON(t *testing.T) {
 	// Create a minimal home dir that mimics ~/.gemini/projects.json
 	homeDir := t.TempDir()
 	geminiDir := filepath.Join(homeDir, ".gemini")
@@ -200,9 +200,10 @@ func TestNativePatchGemini_ProjectsJSONInjected(t *testing.T) {
 	}
 
 	adapter := &projectAdapter{
-		target: domain.ToolGemini,
-		fs:     osFS{},
-		now:    time.Now,
+		target:  domain.ToolGemini,
+		fs:      osFS{},
+		now:     time.Now,
+		homeDir: homeDir,
 	}
 
 	bundle := domain.NewSessionBundle(domain.ToolGemini, "/Users/other/original")
@@ -228,12 +229,12 @@ func TestNativePatchGemini_ProjectsJSONInjected(t *testing.T) {
 	if err := json.Unmarshal(data, &updated); err != nil {
 		t.Fatalf("cannot parse projects.json: %v", err)
 	}
-	if _, ok := updated.Projects[workspaceDir]; !ok {
-		t.Errorf("expected %q to be registered in projects.json, got %v", workspaceDir, updated.Projects)
+	if _, ok := updated.Projects[workspaceDir]; ok {
+		t.Errorf("did not expect %q to be registered in projects.json, got %v", workspaceDir, updated.Projects)
 	}
 }
 
-func TestApplyGlobalSkillsGeminiWritesManagedInstructionBlock(t *testing.T) {
+func TestApplyGlobalSkillsGeminiWritesSharedSkillBundle(t *testing.T) {
 	homeDir := t.TempDir()
 	adapter := &projectAdapter{
 		target:  domain.ToolGemini,
@@ -243,12 +244,7 @@ func TestApplyGlobalSkillsGeminiWritesManagedInstructionBlock(t *testing.T) {
 	}
 
 	payload := domain.SwitchPayload{
-		Skills: []domain.SkillPayload{{
-			Name:        "reviewer",
-			Scope:       "user",
-			Description: "Review skill",
-			Content:     "# Reviewer\n\nCheck changes carefully.",
-		}},
+		Skills: []domain.SkillPayload{testSkillPayload(t, filepath.Join(t.TempDir(), "skills"), "reviewer", "user", "", "---\nname: reviewer\ndescription: Review skill\n---\n\n# Reviewer\n\nCheck changes carefully.\n")},
 	}
 	report := domain.ApplyReport{
 		Status: domain.SwitchStateApplied,
@@ -260,15 +256,12 @@ func TestApplyGlobalSkillsGeminiWritesManagedInstructionBlock(t *testing.T) {
 		t.Fatalf("applyGlobalSkills failed: %v", err)
 	}
 
-	targetPath := filepath.Join(homeDir, ".gemini", "GEMINI.md")
+	targetPath := filepath.Join(homeDir, ".agents", "skills", "reviewer", "SKILL.md")
 	data, err := os.ReadFile(targetPath)
 	if err != nil {
-		t.Fatalf("expected Gemini global instruction file, got %v", err)
+		t.Fatalf("expected Gemini shared skill bundle, got %v", err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "## work-bridge imported global skills") {
-		t.Fatalf("expected managed global skills header, got:\n%s", text)
-	}
 	if !strings.Contains(text, "# Reviewer") {
 		t.Fatalf("expected imported skill content, got:\n%s", text)
 	}
@@ -282,7 +275,7 @@ func TestApplyGlobalSkillsGeminiWritesManagedInstructionBlock(t *testing.T) {
 
 func TestApplyGlobalSkillsSkipsExistingIdenticalSkillWithoutWarning(t *testing.T) {
 	homeDir := t.TempDir()
-	targetPath := filepath.Join(homeDir, ".claude", "skills", "reviewer.md")
+	targetPath := filepath.Join(homeDir, ".claude", "skills", "reviewer", "SKILL.md")
 	writeFile(t, targetPath, "# Reviewer\n\nCheck changes carefully.\n")
 
 	adapter := &projectAdapter{
@@ -293,11 +286,7 @@ func TestApplyGlobalSkillsSkipsExistingIdenticalSkillWithoutWarning(t *testing.T
 	}
 
 	payload := domain.SwitchPayload{
-		Skills: []domain.SkillPayload{{
-			Name:    "reviewer",
-			Scope:   "user",
-			Content: "# Reviewer\n\nCheck changes carefully.\n",
-		}},
+		Skills: []domain.SkillPayload{testSkillPayload(t, filepath.Join(t.TempDir(), "skills"), "reviewer", "user", "", "# Reviewer\n\nCheck changes carefully.\n")},
 	}
 	report := domain.ApplyReport{
 		Status: domain.SwitchStateApplied,
@@ -326,11 +315,7 @@ func TestApplyGlobalSkillsOpenCodeWritesCanonicalSkillPath(t *testing.T) {
 	}
 
 	payload := domain.SwitchPayload{
-		Skills: []domain.SkillPayload{{
-			Name:    "reviewer",
-			Scope:   "user",
-			Content: "# Reviewer\n\nCheck changes carefully.\n",
-		}},
+		Skills: []domain.SkillPayload{testSkillPayload(t, filepath.Join(t.TempDir(), "skills"), "reviewer", "user", "", "# Reviewer\n\nCheck changes carefully.\n")},
 	}
 	report := domain.ApplyReport{
 		Status: domain.SwitchStateApplied,
@@ -665,10 +650,10 @@ func TestApplyPlanSkipsManagedNativePatchesForNativeMode(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Claude native patch: sessions-index.json removal
+// Claude native registration: sessions-index.json removal
 // ---------------------------------------------------------------------------
 
-func TestNativePatchClaude_SessionsIndexRemoved(t *testing.T) {
+func TestApplyNativeRegistrationsClaude_SessionsIndexRemoved(t *testing.T) {
 	homeDir := t.TempDir()
 	projectRoot := filepath.Join(homeDir, "project")
 	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
@@ -690,9 +675,10 @@ func TestNativePatchClaude_SessionsIndexRemoved(t *testing.T) {
 	managedRoot := filepath.Join(projectRoot, ".work-bridge", "claude")
 
 	adapter := &projectAdapter{
-		target: domain.ToolClaude,
-		fs:     osFS{},
-		now:    time.Now,
+		target:  domain.ToolClaude,
+		fs:      osFS{},
+		now:     time.Now,
+		homeDir: homeDir,
 	}
 	bundle := domain.NewSessionBundle(domain.ToolClaude, projectRoot)
 	payload := domain.SwitchPayload{Bundle: bundle}
@@ -703,7 +689,8 @@ func TestNativePatchClaude_SessionsIndexRemoved(t *testing.T) {
 		Session:     domain.SwitchComponentPlan{},
 	}
 
-	adapter.applyNativePatches(payload, plan)
+	_ = payload
+	adapter.applyNativeRegistrations(plan)
 
 	if _, err := os.Stat(indexPath); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("expected sessions-index.json to be removed, err=%v", err)
@@ -711,10 +698,10 @@ func TestNativePatchClaude_SessionsIndexRemoved(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// OpenCode native patch: always emits advisory warning
+// OpenCode project patch: does not emit advisory warning
 // ---------------------------------------------------------------------------
 
-func TestNativePatchOpenCode_EmitsAdvisoryWarning(t *testing.T) {
+func TestProjectPatchOpenCode_DoesNotEmitAdvisoryWarning(t *testing.T) {
 	projectRoot := t.TempDir()
 	adapter := &projectAdapter{
 		target: domain.ToolOpenCode,
@@ -738,8 +725,8 @@ func TestNativePatchOpenCode_EmitsAdvisoryWarning(t *testing.T) {
 			break
 		}
 	}
-	if !found {
-		t.Errorf("expected opencode advisory warning, got %v", warnings)
+	if found {
+		t.Errorf("did not expect opencode advisory warning, got %v", warnings)
 	}
 }
 
@@ -823,5 +810,21 @@ func TestNativePatchDoesNotModifyManifestJSON(t *testing.T) {
 	info, _ := os.Stat(manifestPath)
 	if !info.ModTime().Equal(originalModTime) {
 		t.Error("manifest.json was modified by native patch; expected it to be excluded")
+	}
+}
+
+func testSkillPayload(t *testing.T, root string, name string, scope string, tool domain.Tool, body string) domain.SkillPayload {
+	t.Helper()
+	skillRoot := filepath.Join(root, name)
+	entryPath := filepath.Join(skillRoot, "SKILL.md")
+	writeFile(t, entryPath, body)
+	return domain.SkillPayload{
+		Name:        name,
+		Description: "test skill",
+		RootPath:    skillRoot,
+		EntryPath:   entryPath,
+		Files:       []string{entryPath},
+		Scope:       scope,
+		Tool:        tool,
 	}
 }

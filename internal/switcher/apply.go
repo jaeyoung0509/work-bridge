@@ -61,7 +61,8 @@ func (a *projectAdapter) previewProject(payload domain.SwitchPayload, projectRoo
 	managed := managedRoot(destinationRoot, a.target)
 	instructionPath := a.instructionPath(destinationRoot)
 	sessionFiles := append(bundleManagedFiles(payload.Bundle, report, managed), instructionPath)
-	skillFiles := a.skillFiles(managed, payload.Skills)
+	projectSkills := projectScopedSkills(payload.Skills)
+	skillFiles := a.skillFiles(destinationRoot, projectSkills)
 	mcpFiles := a.mcpFiles(destinationRoot, managed, payload.MCP)
 
 	plan := domain.SwitchPlan{
@@ -78,7 +79,7 @@ func (a *projectAdapter) previewProject(payload domain.SwitchPayload, projectRoo
 		},
 		Skills: domain.SwitchComponentPlan{
 			State:   domain.SwitchStateReady,
-			Summary: fmt.Sprintf("%d managed skills", len(payload.Skills)),
+			Summary: fmt.Sprintf("%d skill bundles", len(projectSkills)),
 			Files:   skillFiles,
 		},
 		MCP: domain.SwitchComponentPlan{
@@ -91,12 +92,15 @@ func (a *projectAdapter) previewProject(payload domain.SwitchPayload, projectRoo
 		},
 		Warnings: dedupeStrings(append(append([]string{}, payload.Warnings...), report.Warnings...)),
 	}
-	if len(payload.Skills) == 0 {
+	if len(projectSkills) == 0 {
 		plan.Skills.Summary = "No skills selected"
 	}
 	if len(payload.MCP.Servers) == 0 {
 		plan.MCP.Summary = "No MCP servers selected"
 	}
+	sort.Strings(plan.Session.Files)
+	sort.Strings(plan.Skills.Files)
+	sort.Strings(plan.MCP.Files)
 
 	for _, file := range sessionFiles {
 		plan.PlannedFiles = append(plan.PlannedFiles, a.planChange(file, "session"))
@@ -214,14 +218,10 @@ func (a *projectAdapter) applyPlan(payload domain.SwitchPayload, plan domain.Swi
 		report.Status = domain.SwitchStatePartial
 	}
 
-	// Post-apply: perform agent-native storage patches (CWD rewrite, index
-	// busting, project registry injection, etc.).
-	if plan.Mode != domain.SwitchModeNative {
-		if nativeWarnings := a.applyNativePatches(payload, plan); len(nativeWarnings) > 0 {
-			report.Warnings = dedupeStrings(append(report.Warnings, nativeWarnings...))
-			if report.Status == domain.SwitchStateApplied {
-				report.Status = domain.SwitchStatePartial
-			}
+	if patchWarnings := a.applyProjectPatches(payload, plan); len(patchWarnings) > 0 {
+		report.Warnings = dedupeStrings(append(report.Warnings, patchWarnings...))
+		if report.Status == domain.SwitchStateApplied {
+			report.Status = domain.SwitchStatePartial
 		}
 	}
 
@@ -284,15 +284,18 @@ func (a *projectAdapter) writeSessionArtifacts(bundle domain.SessionBundle, plan
 }
 
 func (a *projectAdapter) writeSkills(payload domain.SwitchPayload, plan domain.SwitchPlan) ([]string, []string, []string, error) {
-	if len(payload.Skills) == 0 {
+	projectSkills := projectScopedSkills(payload.Skills)
+	if len(projectSkills) == 0 {
 		return nil, nil, nil, nil
 	}
-	skillsDir := filepath.Join(plan.ManagedRoot, "skills")
+	skillsDir := a.projectSkillRoot(plan.DestinationRoot)
+	if skillsDir == "" {
+		return nil, nil, []string{fmt.Sprintf("skill bundles are not configured for %s", a.target)}, nil
+	}
 	updated := []string{}
 	backups := []string{}
-	index := []map[string]any{}
 	used := map[string]int{}
-	for _, skill := range payload.Skills {
+	for _, skill := range projectSkills {
 		slug := sanitizeSkillName(skill.Name)
 		if slug == "" {
 			slug = "skill"
@@ -301,36 +304,13 @@ func (a *projectAdapter) writeSkills(payload domain.SwitchPayload, plan domain.S
 		if used[slug] > 1 {
 			slug = fmt.Sprintf("%s-%d", slug, used[slug])
 		}
-		targetPath := filepath.Join(skillsDir, slug+".md")
-		changed, backup, err := a.writeFile(targetPath, skill.Content)
+		targetDir := filepath.Join(skillsDir, slug)
+		changed, backup, err := a.writeSkillBundle(targetDir, skill)
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		if changed {
-			updated = append(updated, targetPath)
-		}
-		if backup != "" {
-			backups = append(backups, backup)
-		}
-		index = append(index, map[string]any{
-			"name":        skill.Name,
-			"description": skill.Description,
-			"scope":       skill.Scope,
-			"tool":        skill.Tool,
-			"source_path": skill.Path,
-			"target_path": targetPath,
-		})
-	}
-	indexPath := filepath.Join(skillsDir, "index.json")
-	changed, backup, err := a.writeFile(indexPath, marshalJSON(index))
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if changed {
-		updated = append(updated, indexPath)
-	}
-	if backup != "" {
-		backups = append(backups, backup)
+		updated = append(updated, changed...)
+		backups = append(backups, backup...)
 	}
 	return dedupeStrings(updated), dedupeStrings(backups), nil, nil
 }
@@ -747,11 +727,15 @@ func marshalMCPServers(servers map[string]domain.MCPServerConfig) map[string]any
 	return out
 }
 
-func (a *projectAdapter) skillFiles(managedRoot string, skills []domain.SkillPayload) []string {
+func (a *projectAdapter) skillFiles(destinationRoot string, skills []domain.SkillPayload) []string {
 	if len(skills) == 0 {
 		return nil
 	}
-	files := make([]string, 0, len(skills)+1)
+	skillsRoot := a.projectSkillRoot(destinationRoot)
+	if skillsRoot == "" {
+		return nil
+	}
+	files := []string{}
 	used := map[string]int{}
 	for _, skill := range skills {
 		slug := sanitizeSkillName(skill.Name)
@@ -762,10 +746,17 @@ func (a *projectAdapter) skillFiles(managedRoot string, skills []domain.SkillPay
 		if used[slug] > 1 {
 			slug = fmt.Sprintf("%s-%d", slug, used[slug])
 		}
-		files = append(files, filepath.Join(managedRoot, "skills", slug+".md"))
+		targetDir := filepath.Join(skillsRoot, slug)
+		for _, src := range skillFilesForPayload(skill) {
+			rel, err := filepath.Rel(skill.RootPath, src)
+			if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+				continue
+			}
+			files = append(files, filepath.Join(targetDir, rel))
+		}
 	}
-	files = append(files, filepath.Join(managedRoot, "skills", "index.json"))
-	return files
+	sort.Strings(files)
+	return dedupeStrings(files)
 }
 
 func (a *projectAdapter) mcpFiles(projectRoot string, managedRoot string, payload domain.MCPPayload) []string {
@@ -786,6 +777,75 @@ func (a *projectAdapter) planChange(path string, section string) domain.PlannedF
 		Action:  action,
 		Section: section,
 	}
+}
+
+func (a *projectAdapter) projectSkillRoot(destinationRoot string) string {
+	switch a.target {
+	case domain.ToolCodex, domain.ToolGemini:
+		return filepath.Join(destinationRoot, ".agents", "skills")
+	case domain.ToolClaude:
+		return filepath.Join(destinationRoot, ".claude", "skills")
+	case domain.ToolOpenCode:
+		return filepath.Join(destinationRoot, ".opencode", "skills")
+	default:
+		return ""
+	}
+}
+
+func skillFilesForPayload(skill domain.SkillPayload) []string {
+	if len(skill.Files) > 0 {
+		files := append([]string{}, skill.Files...)
+		sort.Strings(files)
+		return files
+	}
+	if strings.TrimSpace(skill.EntryPath) == "" {
+		return nil
+	}
+	return []string{skill.EntryPath}
+}
+
+func projectScopedSkills(skills []domain.SkillPayload) []domain.SkillPayload {
+	out := make([]domain.SkillPayload, 0, len(skills))
+	for _, skill := range skills {
+		if skill.Scope == "project" {
+			out = append(out, skill)
+		}
+	}
+	return out
+}
+
+func (a *projectAdapter) writeSkillBundle(targetDir string, skill domain.SkillPayload) ([]string, []string, error) {
+	if strings.TrimSpace(skill.RootPath) == "" || strings.TrimSpace(skill.EntryPath) == "" {
+		return nil, nil, fmt.Errorf("skill bundle %q is missing root_path or entry_path", skill.Name)
+	}
+
+	updated := []string{}
+	backups := []string{}
+	for _, src := range skillFilesForPayload(skill) {
+		rel, err := filepath.Rel(skill.RootPath, src)
+		if err != nil {
+			return nil, nil, err
+		}
+		rel = filepath.Clean(rel)
+		if rel == "." || strings.HasPrefix(rel, "..") {
+			return nil, nil, fmt.Errorf("skill bundle %q contains out-of-root file %s", skill.Name, src)
+		}
+		data, err := a.fs.ReadFile(src)
+		if err != nil {
+			return nil, nil, err
+		}
+		changed, backup, err := a.writeFile(filepath.Join(targetDir, rel), string(data))
+		if err != nil {
+			return nil, nil, err
+		}
+		if changed {
+			updated = append(updated, filepath.Join(targetDir, rel))
+		}
+		if backup != "" {
+			backups = append(backups, backup)
+		}
+	}
+	return dedupeStrings(updated), dedupeStrings(backups), nil
 }
 
 func (a *projectAdapter) writeFile(path string, content string) (bool, string, error) {

@@ -54,7 +54,7 @@ func newFixtureApp(t *testing.T, fixture testutil.Fixture) *App {
 
 func seedSwitchAssetsForCLI(t *testing.T, fixture testutil.Fixture) {
 	t.Helper()
-	writeFile(t, filepath.Join(fixture.WorkspaceDir, "skills", "project-helper", "SKILL.md"), "# project-helper\n\nProject helper")
+	writeFile(t, filepath.Join(fixture.WorkspaceDir, ".agents", "skills", "project-helper", "SKILL.md"), "# project-helper\n\nProject helper")
 	writeFile(t, filepath.Join(fixture.HomeDir, ".claude", "skills", "user-helper", "SKILL.md"), "# user-helper\n\nUser helper")
 	writeFile(t, filepath.Join(fixture.WorkspaceDir, ".gemini", "settings.json"), `{"mcpServers":{"github":{"command":"mcp-github"}}}`)
 	writeFile(t, filepath.Join(fixture.HomeDir, ".claude", "settings.json"), `{"mcpServers":{"slack":{"command":"mcp-slack"}}}`)
