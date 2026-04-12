@@ -8,7 +8,7 @@
 - applies a target-ready state into project-native files
 - exports the same target-ready state to a separate directory
 
-By default (`--mode project`), it applies changes to managed project files. Using `--mode native`, it actively writes the actual resume state into the target tool's home-level session database or uses the target's native CLI delegate to ensure the session can be seamlessly resumed.
+By default (`--mode project`), it applies changes to project files and target-native repo skill roots without touching external tool storage. Using `--mode native`, it writes a best-effort target-native continuation into the tool's home-level session store or uses the target's native CLI delegate.
 
 > **Stability:** `work-bridge` is still early and not fully stable. Project-native apply and export paths are covered by tests, but some migration paths are still under active refinement. Use `--dry-run` first when trying a new source/target pair.
 
@@ -27,7 +27,7 @@ Most coding-agent tools keep valuable context in incompatible formats. `work-bri
 | Task title and current goal | Normalized from the source session |
 | Session summary and decisions | Added to the target-ready handoff |
 | Project instruction context | Applied into `CLAUDE.md`, `GEMINI.md`, or `AGENTS.md` |
-| Project-scoped skills | Materialized into `.work-bridge/<target>/skills/` |
+| Project-scoped skills | Materialized into native repo skill roots such as `.agents/skills/`, `.claude/skills/`, or `.opencode/skills/` |
 | Effective MCP config | Materialized into `.work-bridge/<target>/mcp.json` and patched into supported target project config files |
 | Portable settings context | Source secrets remain redacted |
 
@@ -50,9 +50,9 @@ The current design is intentionally simpler than the older import/export pipelin
 
 * OpenCode Native apply uses the official OpenCode CLI delegate (`opencode import <file>`), and native export writes an import-compatible `.opencode_export.json` payload rather than mutating SQLite directly.
 
-**Mode Project (`--mode project`):** Applies instruction files (`CLAUDE.md`, `GEMINI.md`, etc.), project-scoped skills, and MCP configs inside the project root only. Does NOT modify external tool storage. Safe for teams and shared repos.
+**Mode Project (`--mode project`):** Applies instruction files (`CLAUDE.md`, `GEMINI.md`, etc.), project-scoped skill bundles, and MCP configs inside the project or export root only. It does NOT modify external tool storage.
 
-**Mode Native (`--mode native`):** Modifies external system state (e.g. `~/.codex/session_index.jsonl`, `~/.gemini/projects.json`, `~/.claude/projects/`, or invokes `opencode import`) to directly load the resume state. Enables seamless session continuation across machines. Also migrates user-scope/global skills to target tool directories.
+**Mode Native (`--mode native`):** Modifies external system state (e.g. `~/.codex/session_index.jsonl`, `~/.gemini/projects.json`, `~/.claude/projects/`, or invokes `opencode import`) to bootstrap a best-effort native continuation. It also migrates user-scope/global skill bundles and global MCP config to target tool directories.
 
 ### Native Mode Support Details
 
@@ -61,7 +61,7 @@ The current design is intentionally simpler than the older import/export pipelin
 | Session write | ✅ JSONL | ✅ JSON | ✅ JSONL | ✅ CLI delegate |
 | History index update | ✅ `history.jsonl` | ✅ `projects.json` | ✅ `session_index.jsonl` | Via `opencode import` |
 | CWD/path patching | ✅ Absolute paths | ✅ Project paths | ✅ `session_meta.cwd` + text | Via payload format |
-| User-scope skills | ✅ `~/.claude/skills/` | ✅ `~/.gemini/GEMINI.md` managed block | ✅ `~/.codex/skills/` | ✅ `~/.config/opencode/skills/` |
+| User-scope skills | ✅ `~/.claude/skills/` | ✅ `~/.agents/skills/` | ✅ `~/.agents/skills/` | ✅ `~/.config/opencode/skills/` |
 | Global MCP migration | ✅ additive merge | ✅ additive merge | ✅ additive merge | ✅ additive merge |
 
 > **Note on Global MCP**: Native mode now performs additive merge into the target tool's user-scope config. Existing target entries win on name conflicts, and lossy fields are surfaced as warnings instead of silently overwriting config.
@@ -163,10 +163,14 @@ Managed session output:
 - Codex: `AGENTS.md` + `.work-bridge/codex/*`
 - OpenCode: `AGENTS.md` + `.work-bridge/opencode/*`
 
-Managed skills output:
+Project skill output:
 
-- `.work-bridge/<target>/skills/*.md`
-- `.work-bridge/<target>/skills/index.json`
+- Codex: `.agents/skills/<name>/SKILL.md`
+- Gemini: `.agents/skills/<name>/SKILL.md`
+- Claude: `.claude/skills/<name>/SKILL.md`
+- OpenCode: `.opencode/skills/<name>/SKILL.md`
+
+Skill bundles keep their original directory layout. `SKILL.md`, `scripts/`, `references/`, `assets/`, and `agents/openai.yaml` are copied as-is.
 
 Managed MCP output:
 
@@ -199,7 +203,7 @@ Example output for `--to claude --out /tmp/claude-handoff`:
 - `/tmp/claude-handoff/.claude/settings.local.json`
 - `/tmp/claude-handoff/.work-bridge/claude/manifest.json`
 - `/tmp/claude-handoff/.work-bridge/claude/mcp.json`
-- `/tmp/claude-handoff/.work-bridge/claude/skills/index.json`
+- `/tmp/claude-handoff/.claude/skills/project-helper/SKILL.md`
 
 This is useful when you want a reviewable, portable handoff tree before applying anything to a live repo.
 
@@ -270,10 +274,10 @@ Current behavior to be aware of:
 - `--mode project` writes instruction files and project-scoped context only (safe for teams)
 - `--mode native` modifies external tool storage for session resume state (machine-specific)
 - Global/user-scope skills are installed to target tool directories in native mode
-  - Claude: `~/.claude/skills/`
-  - Codex: `~/.codex/skills/`
+  - Claude: `~/.claude/skills/<name>/SKILL.md`
+  - Codex: `~/.agents/skills/<name>/SKILL.md`
+  - Gemini: `~/.agents/skills/<name>/SKILL.md`
   - OpenCode: `~/.config/opencode/skills/<name>/SKILL.md`
-  - Gemini: appended to a managed block inside `~/.gemini/GEMINI.md`
 - Global MCP configs are additively merged into target user-scope config files
   - Existing target entries are preserved on name conflicts
   - Lossy target conversions, such as unsupported OpenCode `cwd`, are reported as warnings

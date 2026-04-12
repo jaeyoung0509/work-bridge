@@ -33,12 +33,13 @@ type SwitchPayload struct {
 }
 
 type SkillPayload struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Path        string `json:"path"`
-	Scope       string `json:"scope,omitempty"`
-	Tool        Tool   `json:"tool,omitempty"`
-	Content     string `json:"content,omitempty"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	RootPath    string   `json:"root_path"`
+	EntryPath   string   `json:"entry_path"`
+	Files       []string `json:"files,omitempty"`
+	Scope       string   `json:"scope,omitempty"`
+	Tool        Tool     `json:"tool,omitempty"`
 }
 
 type MCPPayload struct {

@@ -68,7 +68,10 @@ type ProjectEntry struct {
 type SkillEntry struct {
 	Name          string         `json:"name"`
 	Description   string         `json:"description"`
+	RootPath      string         `json:"root_path,omitempty"`
+	EntryPath     string         `json:"entry_path,omitempty"`
 	Path          string         `json:"path"`
+	Files         []string       `json:"files,omitempty"`
 	Source        string         `json:"source"`
 	Scope         string         `json:"scope,omitempty"`
 	Tool          domain.Tool    `json:"tool,omitempty"`
@@ -2347,14 +2350,16 @@ func (m Model) availableSkillTargets(item SkillEntry) []SkillTarget {
 	}
 
 	if projectRoot := m.skillProjectRoot(); projectRoot != "" {
-		add("project:"+projectRoot, "project", "project", "", filepath.Join(projectRoot, "skills", name, "SKILL.md"))
+		add("project:agents:"+projectRoot, "project shared", "project", "", filepath.Join(projectRoot, ".agents", "skills", name, "SKILL.md"))
+		add("project:claude:"+projectRoot, "project claude", "project", domain.ToolClaude, filepath.Join(projectRoot, ".claude", "skills", name, "SKILL.md"))
+		add("project:opencode:"+projectRoot, "project opencode", "project", domain.ToolOpenCode, filepath.Join(projectRoot, ".opencode", "skills", name, "SKILL.md"))
 	}
 	homeDir := strings.TrimSpace(m.snapshot.HomeDir)
 	if homeDir != "" {
-		add("user:codex", "codex user", "user", domain.ToolCodex, filepath.Join(homeDir, ".codex", "skills", name, "SKILL.md"))
+		add("user:agents", "user shared", "user", domain.ToolCodex, filepath.Join(homeDir, ".agents", "skills", name, "SKILL.md"))
+		add("user:gemini", "gemini user", "user", domain.ToolGemini, filepath.Join(homeDir, ".gemini", "skills", name, "SKILL.md"))
 		add("user:claude", "claude user", "user", domain.ToolClaude, filepath.Join(homeDir, ".claude", "skills", name, "SKILL.md"))
 		add("user:opencode", "opencode user", "user", domain.ToolOpenCode, filepath.Join(homeDir, ".config", "opencode", "skills", name, "SKILL.md"))
-		add("global:opencode", "opencode global", "global", domain.ToolOpenCode, filepath.Join(homeDir, ".local", "share", "opencode", "skills", name, "SKILL.md"))
 	}
 
 	sort.SliceStable(targets, func(i, j int) bool {
@@ -2382,7 +2387,8 @@ func (m Model) skillTargetExists(item SkillEntry, targetPath string) bool {
 }
 
 func skillDirName(item SkillEntry) string {
-	name := filepath.Base(filepath.Dir(item.Path))
+	root := firstNonEmpty(item.RootPath, filepath.Dir(item.Path))
+	name := filepath.Base(root)
 	if name != "" && name != "." && name != string(filepath.Separator) {
 		return name
 	}

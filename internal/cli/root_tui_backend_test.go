@@ -42,7 +42,7 @@ func TestInstallSkillFromTUICopiesSkillTree(t *testing.T) {
 		ID:    "project:" + cwd,
 		Label: "project",
 		Scope: "project",
-		Path:  filepath.Join(cwd, "skills", "frontend-design", "SKILL.md"),
+		Path:  filepath.Join(cwd, ".agents", "skills", "frontend-design", "SKILL.md"),
 	}
 	result, err := app.installSkillFromTUI(context.Background(), tui.SkillEntry{
 		Name: "frontend-design",
@@ -52,7 +52,7 @@ func TestInstallSkillFromTUICopiesSkillTree(t *testing.T) {
 		t.Fatalf("install skill failed: %v", err)
 	}
 
-	if got := result.InstalledPath; got != filepath.Join(cwd, "skills", "frontend-design", "SKILL.md") {
+	if got := result.InstalledPath; got != filepath.Join(cwd, ".agents", "skills", "frontend-design", "SKILL.md") {
 		t.Fatalf("unexpected installed path %q", got)
 	}
 	if result.TargetScope != "project" || result.TargetLabel != "project" {
@@ -60,8 +60,8 @@ func TestInstallSkillFromTUICopiesSkillTree(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		filepath.Join(cwd, "skills", "frontend-design", "SKILL.md"),
-		filepath.Join(cwd, "skills", "frontend-design", "notes.txt"),
+		filepath.Join(cwd, ".agents", "skills", "frontend-design", "SKILL.md"),
+		filepath.Join(cwd, ".agents", "skills", "frontend-design", "notes.txt"),
 	} {
 		if _, err := app.fs.Stat(want); err != nil {
 			t.Fatalf("expected copied file %q: %v", want, err)
@@ -408,8 +408,8 @@ func TestEnrichSkillEntriesAssignsConflictState(t *testing.T) {
 	t.Parallel()
 
 	skills := enrichSkillEntries([]tui.SkillEntry{
-		{Name: "frontend-design", Path: "/workspace/repo/skills/frontend-design/SKILL.md", Scope: "project", Content: "# one"},
-		{Name: "frontend-design", Path: "/home/me/.codex/skills/frontend-design/SKILL.md", Scope: "user", Tool: domain.ToolCodex, Content: "# one"},
+		{Name: "frontend-design", Path: "/workspace/repo/.agents/skills/frontend-design/SKILL.md", Scope: "project", Content: "# one"},
+		{Name: "frontend-design", Path: "/home/me/.agents/skills/frontend-design/SKILL.md", Scope: "user", Tool: domain.ToolCodex, Content: "# one"},
 		{Name: "lint-helper", Path: "/home/me/.claude/skills/lint-helper/SKILL.md", Scope: "user", Tool: domain.ToolClaude, Content: "# two"},
 	})
 
@@ -424,7 +424,7 @@ func TestEnrichSkillEntriesAssignsConflictState(t *testing.T) {
 	var lintUser tui.SkillEntry
 	for _, skill := range skills {
 		switch skill.Path {
-		case "/workspace/repo/skills/frontend-design/SKILL.md":
+		case "/workspace/repo/.agents/skills/frontend-design/SKILL.md":
 			frontendProject = skill
 		case "/home/me/.claude/skills/lint-helper/SKILL.md":
 			lintUser = skill

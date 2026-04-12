@@ -1,7 +1,6 @@
 package switcher
 
 import (
-	"encoding/json"
 	"path/filepath"
 	"strings"
 
@@ -9,42 +8,43 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/platform/pathpatch"
 )
 
-// applyNativePatches performs agent-specific post-apply operations that go
-// beyond writing files into the managed .work-bridge directory:
-//
-//   - Codex   : rewrites session_meta.cwd in any exported JSONL that was
-//               written to the managed root.
-//   - Gemini  : creates / updates .project_root and injects the project mapping
-//               into projects.json so Gemini CLI can discover the session.
-//   - Claude  : removes sessions-index.json so Claude re-scans the directory
-//               on the next invocation.
-//   - OpenCode: patches the SQLite database paths if an opencode.db is
-//               co-located in the managed root (best-effort only).
-//
-// All operations are best-effort; failures are collected and returned as
-// warnings so they do not abort the overall apply.
-func (a *projectAdapter) applyNativePatches(payload domain.SwitchPayload, plan domain.SwitchPlan) []string {
+// applyProjectPatches performs project-safe post-apply normalization for the
+// managed handoff artifacts written by applyPlan. These patches only touch
+// files inside the project or export destination tree.
+func (a *projectAdapter) applyProjectPatches(payload domain.SwitchPayload, plan domain.SwitchPlan) []string {
 	switch a.target {
 	case domain.ToolCodex:
-		return a.nativePatchCodex(payload, plan)
+		return a.projectPatchCodex(payload, plan)
 	case domain.ToolGemini:
-		return a.nativePatchGemini(payload, plan)
+		return a.projectPatchGemini(payload, plan)
 	case domain.ToolClaude:
-		return a.nativePatchClaude(payload, plan)
+		return a.projectPatchClaude(payload, plan)
 	case domain.ToolOpenCode:
-		return a.nativePatchOpenCode(payload, plan)
+		return a.projectPatchOpenCode(payload, plan)
+	default:
+		return nil
 	}
-	return nil
 }
 
-// ---------------------------------------------------------------------------
-// Codex
-// ---------------------------------------------------------------------------
+// applyNativePatches is kept as a narrow compatibility shim for tests and
+// callers that still expect the old name. It now performs project-safe
+// artifact patching only.
+func (a *projectAdapter) applyNativePatches(payload domain.SwitchPayload, plan domain.SwitchPlan) []string {
+	return a.applyProjectPatches(payload, plan)
+}
 
-// nativePatchCodex rewrites the cwd field inside every Codex JSONL file that
-// was written to the managed root, so that `codex resume` on the target
-// machine can find the session.
-func (a *projectAdapter) nativePatchCodex(payload domain.SwitchPayload, plan domain.SwitchPlan) []string {
+// applyNativeRegistrations performs native-only post-apply steps that touch
+// tool home directories or refresh native indexes.
+func (a *projectAdapter) applyNativeRegistrations(plan domain.SwitchPlan) []string {
+	switch a.target {
+	case domain.ToolClaude:
+		return a.clearClaudeSessionsIndex(plan.ProjectRoot)
+	default:
+		return nil
+	}
+}
+
+func (a *projectAdapter) projectPatchCodex(payload domain.SwitchPayload, plan domain.SwitchPlan) []string {
 	srcRoot := payload.Bundle.ProjectRoot
 	dstRoot := plan.ProjectRoot
 	if srcRoot == "" || srcRoot == dstRoot {
@@ -53,10 +53,7 @@ func (a *projectAdapter) nativePatchCodex(payload domain.SwitchPayload, plan dom
 
 	warnings := []string{}
 	for _, f := range plan.Session.Files {
-		if filepath.Base(f) == "manifest.json" {
-			continue
-		}
-		if strings.ToLower(filepath.Ext(f)) != ".jsonl" {
+		if filepath.Base(f) == "manifest.json" || strings.ToLower(filepath.Ext(f)) != ".jsonl" {
 			continue
 		}
 		data, err := a.fs.ReadFile(f)
@@ -66,10 +63,8 @@ func (a *projectAdapter) nativePatchCodex(payload domain.SwitchPayload, plan dom
 		}
 		patched, ok := pathpatch.PatchCodexSessionMetaCWD(data, dstRoot)
 		if !ok {
-			// Nothing to patch (already correct or not a session_meta file).
 			continue
 		}
-		// Also do a full payload path replacement for tool_use / tool_result records.
 		patched = pathpatch.PatchJSONLBytes(patched, srcRoot, dstRoot)
 		if err := a.fs.WriteFile(f, patched, 0o644); err != nil {
 			warnings = append(warnings, "codex cwd patch: cannot write "+f+": "+err.Error())
@@ -78,19 +73,9 @@ func (a *projectAdapter) nativePatchCodex(payload domain.SwitchPayload, plan dom
 	return warnings
 }
 
-// ---------------------------------------------------------------------------
-// Gemini
-// ---------------------------------------------------------------------------
-
-// nativePatchGemini ensures Gemini CLI can rediscover the imported session by:
-//  1. Creating / updating .project_root inside the managed root to contain the
-//     target absolute project path.
-//  2. Injecting an entry in ~/.gemini/projects.json (if accessible) mapping
-//     the target absolute path to the slug derived from the managed root name.
-func (a *projectAdapter) nativePatchGemini(payload domain.SwitchPayload, plan domain.SwitchPlan) []string {
+func (a *projectAdapter) projectPatchGemini(payload domain.SwitchPayload, plan domain.SwitchPlan) []string {
 	warnings := []string{}
 
-	// 1. Write .project_root file so Gemini ownership check passes.
 	projectRootFile := filepath.Join(plan.ManagedRoot, ".project_root")
 	if err := a.fs.MkdirAll(plan.ManagedRoot, 0o755); err == nil {
 		if err := a.fs.WriteFile(projectRootFile, []byte(plan.ProjectRoot+"\n"), 0o644); err != nil {
@@ -98,202 +83,101 @@ func (a *projectAdapter) nativePatchGemini(payload domain.SwitchPayload, plan do
 		}
 	}
 
-	// 2. Patch internal JSON payload paths within session files.
-	// manifest.json is excluded because it is always freshly generated by apply.
 	srcRoot := payload.Bundle.ProjectRoot
 	dstRoot := plan.ProjectRoot
-	if srcRoot != "" && srcRoot != dstRoot {
-		for _, f := range plan.Session.Files {
-			if filepath.Base(f) == "manifest.json" {
-				continue // always regenerated; never stale
-			}
-			ext := strings.ToLower(filepath.Ext(f))
-			if ext != ".json" {
-				continue
-			}
-			data, err := a.fs.ReadFile(f)
-			if err != nil {
-				continue
-			}
-			patched, err := pathpatch.PatchJSONBytes(data, srcRoot, dstRoot)
-			if err != nil {
-				continue
-			}
-			_ = a.fs.WriteFile(f, patched, 0o644)
+	if srcRoot == "" || srcRoot == dstRoot {
+		return warnings
+	}
+	for _, f := range plan.Session.Files {
+		if filepath.Base(f) == "manifest.json" || strings.ToLower(filepath.Ext(f)) != ".json" {
+			continue
 		}
-	}
-
-	// 3. Inject into projects.json when accessible.
-	geminiFolderWarning := a.injectGeminiProjectsJSON(plan)
-	if geminiFolderWarning != "" {
-		warnings = append(warnings, geminiFolderWarning)
-	}
-
-	return warnings
-}
-
-// injectGeminiProjectsJSON adds an entry to ~/.gemini/projects.json so Gemini
-// CLI maps the target project path to the slug used by the managed root.
-func (a *projectAdapter) injectGeminiProjectsJSON(plan domain.SwitchPlan) string {
-	// Derive the Gemini home from the managed root:
-	// plan.ManagedRoot = <projectRoot>/.work-bridge/gemini
-	// Gemini home is typically ~/.gemini — we cannot know that from here, but
-	// we can look for a projects.json in common relative locations.
-	candidates := []string{
-		filepath.Join(plan.ProjectRoot, "..", "..", "..", ".gemini", "projects.json"),
-	}
-	// Also allow a .gemini sibling to $HOME derived heuristically.
-	managedParent := filepath.Dir(filepath.Dir(plan.ManagedRoot)) // projectRoot
-	candidates = append(candidates,
-		filepath.Join(filepath.Dir(managedParent), ".gemini", "projects.json"),
-	)
-
-	for _, projectsPath := range candidates {
-		projectsPath = filepath.Clean(projectsPath)
-		data, err := a.fs.ReadFile(projectsPath)
+		data, err := a.fs.ReadFile(f)
 		if err != nil {
 			continue
 		}
-		type projectsFile struct {
-			Projects map[string]string `json:"projects"`
-		}
-		var pf projectsFile
-		if err := json.Unmarshal(data, &pf); err != nil || pf.Projects == nil {
-			pf.Projects = map[string]string{}
-		}
-
-		slug := pathpatch.GeminiProjectSlug(plan.ProjectRoot, pf.Projects)
-		if existing, ok := pf.Projects[plan.ProjectRoot]; ok && existing == slug {
-			return "" // already registered
-		}
-		pf.Projects[plan.ProjectRoot] = slug
-
-		out, err := json.MarshalIndent(pf, "", "  ")
+		patched, err := pathpatch.PatchJSONBytes(data, srcRoot, dstRoot)
 		if err != nil {
-			return "gemini projects.json marshal: " + err.Error()
-		}
-		if err := a.fs.WriteFile(projectsPath, append(out, '\n'), 0o644); err != nil {
-			return "gemini projects.json write: " + err.Error()
-		}
-		return "" // success
-	}
-	// projects.json not found — this is a non-fatal soft warning.
-	return "gemini: could not locate projects.json; Gemini CLI session discovery may require manual re-registration"
-}
-
-// ---------------------------------------------------------------------------
-// Claude
-// ---------------------------------------------------------------------------
-
-// nativePatchClaude removes the sessions-index.json cache file so that Claude
-// CLI is forced to re-scan the projects directory on the next run, making the
-// imported session immediately visible in the /resume picker.
-func (a *projectAdapter) nativePatchClaude(payload domain.SwitchPayload, plan domain.SwitchPlan) []string {
-	warnings := []string{}
-
-	// 1. Patch payload paths in session files.
-	// Exclude manifest.json (always regenerated) and non-JSON files.
-	srcRoot := payload.Bundle.ProjectRoot
-	dstRoot := plan.ProjectRoot
-	if srcRoot != "" && srcRoot != dstRoot {
-		for _, f := range plan.Session.Files {
-			if filepath.Base(f) == "manifest.json" {
-				continue // always regenerated; never stale
-			}
-			ext := strings.ToLower(filepath.Ext(f))
-			if ext != ".jsonl" && ext != ".json" {
-				continue
-			}
-			data, err := a.fs.ReadFile(f)
-			if err != nil {
-				continue
-			}
-			var patched []byte
-			if ext == ".jsonl" {
-				patched = pathpatch.PatchJSONLBytes(data, srcRoot, dstRoot)
-			} else {
-				var err2 error
-				patched, err2 = pathpatch.PatchJSONBytes(data, srcRoot, dstRoot)
-				if err2 != nil {
-					continue
-				}
-			}
-			_ = a.fs.WriteFile(f, patched, 0o644)
-		}
-	}
-
-	// 2. Bust 每 sessions-index.json so Claude re-scans.
-	// The encoded project dir name is derived from the target project root.
-	encodedDir := pathpatch.ClaudeProjectDirName(plan.ProjectRoot)
-	// Look up the Claude home from well-known relative position to managed root.
-	// managed root = <project>/.work-bridge/claude
-	// Claude home   = ~/.claude  — search heuristically
-	candidateClaudeDirs := []string{
-		filepath.Join(plan.ProjectRoot, "..", "..", ".claude"),
-		filepath.Join(filepath.Dir(plan.ProjectRoot), ".claude"),
-	}
-	for _, claudeDir := range candidateClaudeDirs {
-		indexPath := filepath.Join(filepath.Clean(claudeDir), "projects", encodedDir, "sessions-index.json")
-		if _, err := a.fs.Stat(indexPath); err != nil {
 			continue
 		}
-		// Remove the index so that Claude re-scans on next launch.
-		if err := a.fs.Remove(indexPath); err != nil {
-			warnings = append(warnings, "claude sessions-index removal: "+err.Error())
-		}
+		_ = a.fs.WriteFile(f, patched, 0o644)
 	}
-
 	return warnings
 }
 
-// ---------------------------------------------------------------------------
-// OpenCode
-// ---------------------------------------------------------------------------
-
-// nativePatchOpenCode performs a best-effort path correction in the managed
-// OpenCode session JSON files. Direct SQLite manipulation is intentionally
-// avoided to prevent database corruption if the OpenCode daemon is running.
-// Instead we patch the exported JSON files in the managed root and emit a
-// warning directing the user to use opencode's own import command for full
-// native storage integration.
-func (a *projectAdapter) nativePatchOpenCode(payload domain.SwitchPayload, plan domain.SwitchPlan) []string {
-	warnings := []string{}
-
+func (a *projectAdapter) projectPatchClaude(payload domain.SwitchPayload, plan domain.SwitchPlan) []string {
 	srcRoot := payload.Bundle.ProjectRoot
 	dstRoot := plan.ProjectRoot
-
-	if srcRoot != "" && srcRoot != dstRoot {
-		for _, f := range plan.Session.Files {
-			if filepath.Base(f) == "manifest.json" {
-				continue // always regenerated; patching would trigger backup on next apply
-			}
-			ext := strings.ToLower(filepath.Ext(f))
-			if ext != ".json" && ext != ".jsonl" && ext != ".jsonc" {
-				continue
-			}
-			data, err := a.fs.ReadFile(f)
+	if srcRoot == "" || srcRoot == dstRoot {
+		return nil
+	}
+	for _, f := range plan.Session.Files {
+		if filepath.Base(f) == "manifest.json" {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(f))
+		if ext != ".jsonl" && ext != ".json" {
+			continue
+		}
+		data, err := a.fs.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var patched []byte
+		if ext == ".jsonl" {
+			patched = pathpatch.PatchJSONLBytes(data, srcRoot, dstRoot)
+		} else {
+			patched, err = pathpatch.PatchJSONBytes(data, srcRoot, dstRoot)
 			if err != nil {
 				continue
 			}
-			var patched []byte
-			switch ext {
-			case ".jsonl":
-				patched = pathpatch.PatchJSONLBytes(data, srcRoot, dstRoot)
-			default:
-				patched, err = pathpatch.PatchJSONBytes(data, srcRoot, dstRoot)
-				if err != nil {
-					continue
-				}
-			}
-			_ = a.fs.WriteFile(f, patched, 0o644)
 		}
+		_ = a.fs.WriteFile(f, patched, 0o644)
 	}
-
-	// Advise the user about native SQLite integration.
-	warnings = append(warnings,
-		"opencode: native SQLite integration is best-effort; for full session resume run: opencode session import <managed-root>/manifest.json",
-	)
-
-	return warnings
+	return nil
 }
 
+func (a *projectAdapter) projectPatchOpenCode(payload domain.SwitchPayload, plan domain.SwitchPlan) []string {
+	srcRoot := payload.Bundle.ProjectRoot
+	dstRoot := plan.ProjectRoot
+	if srcRoot == "" || srcRoot == dstRoot {
+		return nil
+	}
+	for _, f := range plan.Session.Files {
+		if filepath.Base(f) == "manifest.json" {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(f))
+		if ext != ".json" && ext != ".jsonl" && ext != ".jsonc" {
+			continue
+		}
+		data, err := a.fs.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var patched []byte
+		switch ext {
+		case ".jsonl":
+			patched = pathpatch.PatchJSONLBytes(data, srcRoot, dstRoot)
+		default:
+			patched, err = pathpatch.PatchJSONBytes(data, srcRoot, dstRoot)
+			if err != nil {
+				continue
+			}
+		}
+		_ = a.fs.WriteFile(f, patched, 0o644)
+	}
+	return nil
+}
+
+func (a *projectAdapter) clearClaudeSessionsIndex(projectRoot string) []string {
+	claudeHome := a.toolPaths.Dir(domain.ToolClaude, a.homeDir)
+	indexPath := filepath.Join(claudeHome, "projects", pathpatch.ClaudeProjectDirName(projectRoot), "sessions-index.json")
+	if _, err := a.fs.Stat(indexPath); err != nil {
+		return nil
+	}
+	if err := a.fs.Remove(indexPath); err != nil {
+		return []string{"claude sessions-index removal: " + err.Error()}
+	}
+	return nil
+}

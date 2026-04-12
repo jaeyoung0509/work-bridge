@@ -1,10 +1,10 @@
 package switcher
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -45,7 +45,10 @@ func (a *projectAdapter) applyNativeOpenCode(payload domain.SwitchPayload, plan 
 	}
 	report.AppliedMode = string(domain.SwitchModeNative)
 
-	if _, err := exec.LookPath("opencode"); err != nil {
+	if a.lookPath == nil {
+		return report, fmt.Errorf("opencode CLI lookup is not configured")
+	}
+	if _, err := a.lookPath("opencode"); err != nil {
 		return report, fmt.Errorf("opencode CLI is not installed or not in PATH: %w", err)
 	}
 
@@ -64,9 +67,13 @@ func (a *projectAdapter) applyNativeOpenCode(payload domain.SwitchPayload, plan 
 	}
 	defer a.fs.Remove(tempFile) // Cleanup
 
-	cmd := exec.Command("opencode", "import", tempFile)
-	cmd.Dir = plan.ProjectRoot
-	if err := cmd.Run(); err != nil {
+	if a.runCmd == nil {
+		return report, fmt.Errorf("opencode CLI runner is not configured")
+	}
+	if _, stderr, err := a.runCmd(context.Background(), "opencode", "import", tempFile); err != nil {
+		if len(stderr) > 0 {
+			return report, fmt.Errorf("opencode import failed: %s", strings.TrimSpace(string(stderr)))
+		}
 		return report, fmt.Errorf("opencode import failed: %w", err)
 	}
 

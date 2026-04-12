@@ -50,10 +50,11 @@ func TestScanSkillsClassifiesScopeAndTool(t *testing.T) {
 	homeDir := filepath.Join(root, "home")
 	cwd := filepath.Join(root, "repo")
 
-	writeFile(t, filepath.Join(cwd, "skills", "project-helper", "SKILL.md"), "# project-helper")
-	writeFile(t, filepath.Join(homeDir, ".codex", "skills", "frontend-design", "SKILL.md"), "# frontend-design")
-	writeFile(t, filepath.Join(homeDir, ".claude", "skills", "reviewer.md"), "# reviewer")
-	writeFile(t, filepath.Join(homeDir, ".local", "share", "opencode", "skills", "legacy-helper", "SKILL.md"), "# legacy-helper")
+	writeFile(t, filepath.Join(cwd, ".agents", "skills", "project-helper", "SKILL.md"), "---\nname: project-helper\ndescription: Project helper\n---\n\n# project-helper")
+	writeFile(t, filepath.Join(cwd, ".gemini", "skills", "gemini-helper", "SKILL.md"), "---\nname: gemini-helper\ndescription: Gemini helper\n---\n\n# gemini-helper")
+	writeFile(t, filepath.Join(homeDir, ".agents", "skills", "frontend-design", "SKILL.md"), "---\nname: frontend-design\ndescription: Frontend design\n---\n\n# frontend-design")
+	writeFile(t, filepath.Join(homeDir, ".claude", "skills", "reviewer", "SKILL.md"), "---\nname: reviewer\ndescription: Review code\n---\n\n# reviewer")
+	writeFile(t, filepath.Join(homeDir, ".config", "opencode", "skills", "legacy-helper", "SKILL.md"), "---\nname: legacy-helper\ndescription: OpenCode helper\n---\n\n# legacy-helper")
 
 	skills, err := ScanSkills(fsx.OSFS{}, cwd, homeDir)
 	if err != nil {
@@ -63,14 +64,17 @@ func TestScanSkillsClassifiesScopeAndTool(t *testing.T) {
 	if !containsSkill(skills, "project-helper", "project", "") {
 		t.Fatalf("expected project scope skill, got %#v", skills)
 	}
-	if !containsSkill(skills, "frontend-design", "user", "codex") {
-		t.Fatalf("expected codex user skill, got %#v", skills)
+	if !containsSkill(skills, "gemini-helper", "project", "gemini") {
+		t.Fatalf("expected gemini workspace skill, got %#v", skills)
+	}
+	if !containsSkill(skills, "frontend-design", "user", "") {
+		t.Fatalf("expected generic user skill, got %#v", skills)
 	}
 	if !containsSkill(skills, "reviewer", "user", "claude") {
-		t.Fatalf("expected claude user flat markdown skill, got %#v", skills)
+		t.Fatalf("expected claude user skill, got %#v", skills)
 	}
-	if !containsSkill(skills, "legacy-helper", "global", "opencode") {
-		t.Fatalf("expected opencode global skill, got %#v", skills)
+	if !containsSkill(skills, "legacy-helper", "user", "opencode") {
+		t.Fatalf("expected opencode user skill, got %#v", skills)
 	}
 }
 

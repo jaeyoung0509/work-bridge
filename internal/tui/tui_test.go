@@ -43,7 +43,7 @@ func TestWorkspaceActionsCoverSessionSkillAndMCPFlows(t *testing.T) {
 					{Name: "repo", Root: "/workspace/repo", WorkspaceRoot: "/workspace", Markers: []string{"git", "codex"}, SessionCount: 1},
 				},
 				Skills: []SkillEntry{
-					{Name: "frontend-design", Description: "Design frontend flows", Path: "/skills/frontend-design/SKILL.md", Source: "codex user", Scope: "user", Tool: domain.ToolCodex, Content: "# frontend-design"},
+					{Name: "frontend-design", Description: "Design frontend flows", Path: "/home/me/.agents/skills/frontend-design/SKILL.md", Source: "user .agents/skills", Scope: "user", Tool: domain.ToolCodex, Content: "# frontend-design"},
 				},
 				MCPProfiles: []MCPEntry{
 					{Name: "claude settings", Path: "/configs/claude/settings.json", Status: "configured", Details: "1 declared server(s)", Tool: domain.ToolClaude, DeclaredServers: 1, RawConfig: `{"mcpServers":{"github":{}}}`},
@@ -146,7 +146,7 @@ func TestWorkspaceActionsCoverSessionSkillAndMCPFlows(t *testing.T) {
 		m = updated.(Model)
 	}
 
-	if _, ok := m.installByPath["/skills/frontend-design/SKILL.md"]; !ok {
+	if _, ok := m.installByPath["/home/me/.agents/skills/frontend-design/SKILL.md"]; !ok {
 		t.Fatalf("expected skill install result cache")
 	}
 
@@ -177,7 +177,7 @@ func TestViewRendersAcrossResponsiveModes(t *testing.T) {
 			},
 		},
 		Projects:    []ProjectEntry{{Name: "repo", Root: "/workspace/repo", WorkspaceRoot: "/workspace", Markers: []string{"git"}}},
-		Skills:      []SkillEntry{{Name: "skill-one", Description: "desc", Path: "/skills/skill-one/SKILL.md", Scope: "project"}},
+		Skills:      []SkillEntry{{Name: "skill-one", Description: "desc", Path: "/workspace/repo/.agents/skills/skill-one/SKILL.md", Scope: "project"}},
 		MCPProfiles: []MCPEntry{{Name: "codex config", Path: "/configs/config.toml", Status: "configured", Tool: domain.ToolCodex}},
 		HealthSummary: WorkspaceHealthSummary{
 			InstalledTools: 1,
@@ -216,7 +216,7 @@ func TestMouseClickUsesRenderedHitboxesInCompactNav(t *testing.T) {
 		InspectByTool: map[domain.Tool]inspect.Report{
 			domain.ToolCodex: {Tool: "codex", Sessions: []inspect.Session{{ID: "session-1", Title: "Ship UI"}}},
 		},
-		Skills:      []SkillEntry{{Name: "skill-one", Description: "desc", Path: "/skills/skill-one/SKILL.md", Scope: "project"}},
+		Skills:      []SkillEntry{{Name: "skill-one", Description: "desc", Path: "/workspace/repo/.agents/skills/skill-one/SKILL.md", Scope: "project"}},
 		MCPProfiles: []MCPEntry{{Name: "claude settings", Path: "/configs/claude/settings.json", Status: "parsed", Tool: domain.ToolClaude}},
 	}
 
@@ -251,8 +251,8 @@ func TestMouseClickAndWheelDrivePreviewInteraction(t *testing.T) {
 	m.snapshot = WorkspaceSnapshot{
 		Detect: detect.Report{CWD: "/workspace/repo", ProjectRoot: "/workspace/repo"},
 		Skills: []SkillEntry{
-			{Name: "alpha", Description: "desc", Path: "/skills/alpha/SKILL.md", Scope: "project", Content: strings.Join(contentLines, "\n")},
-			{Name: "beta", Description: "desc", Path: "/skills/beta/SKILL.md", Scope: "project", Content: strings.Join(contentLines, "\n")},
+			{Name: "alpha", Description: "desc", Path: "/workspace/repo/.agents/skills/alpha/SKILL.md", Scope: "project", Content: strings.Join(contentLines, "\n")},
+			{Name: "beta", Description: "desc", Path: "/workspace/repo/.agents/skills/beta/SKILL.md", Scope: "project", Content: strings.Join(contentLines, "\n")},
 		},
 	}
 	m.skillTabIdx = 1
@@ -326,9 +326,9 @@ func TestProjectSelectionScopesWorkspaceAndCanBeCleared(t *testing.T) {
 			{Name: "service", Root: "/workspace/repo/service", WorkspaceRoot: "/workspace", SessionCount: 1, SkillCount: 1, MCPCount: 1, SessionByTool: map[string]int{"codex": 1}},
 		},
 		Skills: []SkillEntry{
-			{Name: "repo-skill", Path: "/workspace/repo/skills/root/SKILL.md", Scope: "project"},
-			{Name: "service-skill", Path: "/workspace/repo/service/skills/nested/SKILL.md", Scope: "project"},
-			{Name: "other-skill", Path: "/workspace/other/skills/other/SKILL.md", Scope: "project"},
+			{Name: "repo-skill", Path: "/workspace/repo/.agents/skills/root/SKILL.md", Scope: "project"},
+			{Name: "service-skill", Path: "/workspace/repo/service/.agents/skills/nested/SKILL.md", Scope: "project"},
+			{Name: "other-skill", Path: "/workspace/other/.agents/skills/other/SKILL.md", Scope: "project"},
 		},
 		MCPProfiles: []MCPEntry{
 			{Name: "repo mcp", Path: "/workspace/repo/.claude/settings.json"},
@@ -509,18 +509,18 @@ func TestSkillSyncTargetsPreferProjectAndCanCycleToExternalScopes(t *testing.T) 
 		Skills: []SkillEntry{
 			{
 				Name:          "frontend-design",
-				Path:          "/home/me/.codex/skills/frontend-design/SKILL.md",
+				Path:          "/home/me/.agents/skills/frontend-design/SKILL.md",
 				Scope:         "user",
 				Tool:          domain.ToolCodex,
-				Source:        "codex user",
+				Source:        "user .agents/skills",
 				ConflictState: "only-in-user/global",
 				VariantCount:  1,
 			},
 			{
 				Name:          "lint-helper",
-				Path:          "/workspace/repo/skills/lint-helper/SKILL.md",
+				Path:          "/workspace/repo/.agents/skills/lint-helper/SKILL.md",
 				Scope:         "project",
-				Source:        "project skills",
+				Source:        "project .agents/skills",
 				ConflictState: "only-in-project",
 				VariantCount:  1,
 			},
@@ -535,7 +535,7 @@ func TestSkillSyncTargetsPreferProjectAndCanCycleToExternalScopes(t *testing.T) 
 	if !ok {
 		t.Fatalf("expected default target")
 	}
-	if target.Scope != "project" || target.Path != "/workspace/repo/skills/frontend-design/SKILL.md" {
+	if target.Scope != "project" || target.Path != "/workspace/repo/.agents/skills/frontend-design/SKILL.md" {
 		t.Fatalf("expected default project sync target, got %#v", target)
 	}
 
@@ -543,7 +543,7 @@ func TestSkillSyncTargetsPreferProjectAndCanCycleToExternalScopes(t *testing.T) 
 		updated, _ := m.Update(cmd())
 		m = updated.(Model)
 	}
-	if syncedTarget.Path != "/workspace/repo/skills/frontend-design/SKILL.md" {
+	if syncedTarget.Path != "/workspace/repo/.agents/skills/frontend-design/SKILL.md" {
 		t.Fatalf("expected project sync path, got %#v", syncedTarget)
 	}
 

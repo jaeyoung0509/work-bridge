@@ -73,6 +73,12 @@ func (a *projectAdapter) applyNativeClaude(payload domain.SwitchPayload, plan do
 	report.FilesUpdated = append(report.FilesUpdated, historyPath)
 
 	report.FilesUpdated = dedupeStrings(report.FilesUpdated)
+	if warnings := a.applyNativeRegistrations(plan); len(warnings) > 0 {
+		report.Warnings = dedupeStrings(append(report.Warnings, warnings...))
+		if report.Status == domain.SwitchStateApplied {
+			report.Status = domain.SwitchStatePartial
+		}
+	}
 	return a.applyNativeGlobalArtifacts(payload, report)
 }
 
