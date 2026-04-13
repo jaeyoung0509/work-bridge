@@ -9,10 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/jaeyoung0509/work-bridge/internal/detect"
 	"github.com/jaeyoung0509/work-bridge/internal/switcher"
 	"github.com/jaeyoung0509/work-bridge/internal/ui"
-	tea "charm.land/bubbletea/v2"
 )
 
 func (a *App) runRoot(cmd *cobra.Command, _ []string) error {
@@ -34,7 +34,10 @@ func (a *App) runRoot(cmd *cobra.Command, _ []string) error {
 		Now:       a.clock.Now,
 	})
 
-	p := tea.NewProgram(ui.NewMainModel(cmd.Context(), service))
+	p := tea.NewProgram(ui.NewMainModel(cmd.Context(), service, ui.Options{
+		ProjectRoot:      cwd,
+		DefaultExportDir: a.config.Output.ExportDir,
+	}))
 	_, err = p.Run()
 	return err
 }
