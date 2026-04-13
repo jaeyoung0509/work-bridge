@@ -36,6 +36,13 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	newList, listCmd := m.List.Update(msg)
+	m.List = newList
+	if listCmd != nil {
+		cmd = func() tea.Msg { return listCmd() }
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		h, w := msg.Height, msg.Width
@@ -50,13 +57,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-	}
-
-	var cmd tea.Cmd
-	newList, listCmd := m.List.Update(msg)
-	m.List = newList
-	if listCmd != nil {
-		cmd = func() tea.Msg { return listCmd() }
+	case tea.MouseClickMsg:
+		if msg.Mouse().Button == tea.MouseLeft {
+			if selected, ok := m.List.SelectedItem().(item); ok {
+				return m, func() tea.Msg {
+					return SessionSelectedMsg{Session: selected.session}
+				}
+			}
+		}
 	}
 	return m, cmd
 }
