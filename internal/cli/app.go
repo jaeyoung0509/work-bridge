@@ -33,6 +33,7 @@ type Config struct {
 	ConfigFile     string   `mapstructure:"config"`
 	Format         string   `mapstructure:"format"`
 	Verbose        bool     `mapstructure:"verbose"`
+	V2             bool     `mapstructure:"v2"`
 	WorkspaceRoots []string `mapstructure:"workspace_roots"`
 	Paths          domain.ToolPaths
 	Output         OutputConfig
@@ -146,6 +147,7 @@ func (a *App) initConfig(cmd *cobra.Command) error {
 		ConfigFile:     configPath,
 		Format:         a.viper.GetString("format"),
 		Verbose:        a.viper.GetBool("verbose"),
+		V2:             a.viper.GetBool("v2"),
 		WorkspaceRoots: a.viper.GetStringSlice("workspace_roots"),
 		Paths: domain.ToolPaths{
 			Codex:    a.viper.GetString("paths.codex"),
@@ -197,11 +199,14 @@ func (a *App) newRootCommand() *cobra.Command {
 	root.PersistentFlags().String("config", "", "Path to a work-bridge config file.")
 	root.PersistentFlags().String("format", "text", "Output format. One of: text, json.")
 	root.PersistentFlags().Bool("verbose", false, "Enable verbose logging.")
+	root.PersistentFlags().Bool("v2", false, "Enable the new component-based TUI.")
+	_ = root.PersistentFlags().MarkHidden("v2")
 	root.PersistentFlags().StringSlice("workspace-roots", nil, "Workspace roots to scan for projects.")
 
 	_ = a.viper.BindPFlag("config", root.PersistentFlags().Lookup("config"))
 	_ = a.viper.BindPFlag("format", root.PersistentFlags().Lookup("format"))
 	_ = a.viper.BindPFlag("verbose", root.PersistentFlags().Lookup("verbose"))
+	_ = a.viper.BindPFlag("v2", root.PersistentFlags().Lookup("v2"))
 	_ = a.viper.BindPFlag("workspace_roots", root.PersistentFlags().Lookup("workspace-roots"))
 
 	root.AddCommand(

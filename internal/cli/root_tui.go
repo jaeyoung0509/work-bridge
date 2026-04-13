@@ -12,6 +12,8 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/detect"
 	"github.com/jaeyoung0509/work-bridge/internal/switcher"
 	"github.com/jaeyoung0509/work-bridge/internal/switchui"
+	"github.com/jaeyoung0509/work-bridge/internal/ui"
+	tea "charm.land/bubbletea/v2"
 )
 
 func (a *App) runRoot(cmd *cobra.Command, _ []string) error {
@@ -32,6 +34,13 @@ func (a *App) runRoot(cmd *cobra.Command, _ []string) error {
 		LookPath:  a.look,
 		Now:       a.clock.Now,
 	})
+
+	if a.config.V2 {
+		p := tea.NewProgram(ui.NewMainModel(cmd.Context(), service))
+		_, err := p.Run()
+		return err
+	}
+
 	backend := switchui.Backend{
 		LoadWorkspace: service.LoadWorkspace,
 		Preview:       service.Preview,
