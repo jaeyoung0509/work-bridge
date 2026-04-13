@@ -36,6 +36,7 @@ func (a *App) runRoot(cmd *cobra.Command, _ []string) error {
 
 	p := tea.NewProgram(ui.NewMainModel(cmd.Context(), service, ui.Options{
 		ProjectRoot:      cwd,
+		WorkspaceRoots:   append([]string{}, a.config.WorkspaceRoots...),
 		DefaultExportDir: a.config.Output.ExportDir,
 	}))
 	_, err = p.Run()

@@ -112,8 +112,8 @@ func defaultCommandRunner(ctx context.Context, name string, args ...string) ([]b
 	return stdout, nil, err
 }
 
-func (s *Service) LoadWorkspace(ctx context.Context) (Workspace, error) {
-	projectRoot, err := s.resolveProjectRoot("")
+func (s *Service) LoadWorkspace(ctx context.Context, projectRoot string) (Workspace, error) {
+	projectRoot, err := s.resolveProjectRoot(projectRoot)
 	if err != nil {
 		return Workspace{}, err
 	}
@@ -171,6 +171,26 @@ func (s *Service) LoadWorkspace(ctx context.Context) (Workspace, error) {
 		ProjectRoot: projectRoot,
 		Sessions:    items,
 	}, nil
+}
+
+func (s *Service) LoadProjects(_ context.Context, roots []string) ([]catalog.ProjectEntry, error) {
+	return catalog.ScanProjects(s.fs, s.projectDiscoveryRoots(roots))
+}
+
+func (s *Service) LoadSkills(_ context.Context, projectRoot string) ([]catalog.SkillEntry, error) {
+	projectRoot, err := s.resolveProjectRoot(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	return catalog.ScanSkills(s.fs, projectRoot, s.homeDir)
+}
+
+func (s *Service) LoadMCP(_ context.Context, projectRoot string) ([]catalog.MCPEntry, error) {
+	projectRoot, err := s.resolveProjectRoot(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	return catalog.ScanMCP(s.fs, projectRoot, s.homeDir, s.toolPaths)
 }
 
 func (s *Service) Preview(ctx context.Context, req Request) (Result, error) {
@@ -517,6 +537,45 @@ func (s *Service) collectMCP(projectRoot string) (domain.MCPPayload, error) {
 		return mcpScopeRank(payload.Sources[i].Scope) < mcpScopeRank(payload.Sources[j].Scope)
 	})
 	return payload, nil
+}
+
+func (s *Service) projectDiscoveryRoots(roots []string) []string {
+	candidates := append([]string{}, roots...)
+
+	if currentRoot, err := s.resolveProjectRoot(""); err == nil && currentRoot != "" {
+		candidates = append(candidates, currentRoot, filepath.Dir(currentRoot))
+	}
+
+	candidates = append(candidates,
+		filepath.Join(s.homeDir, "Projects"),
+		filepath.Join(s.homeDir, "Code"),
+		filepath.Join(s.homeDir, "workspace"),
+		filepath.Join(s.homeDir, "workspaces"),
+		filepath.Join(s.homeDir, "src"),
+	)
+	return dedupeExistingDirs(s.fs, candidates)
+}
+
+func dedupeExistingDirs(fs fsx.FS, roots []string) []string {
+	out := make([]string, 0, len(roots))
+	seen := make(map[string]struct{}, len(roots))
+	for _, root := range roots {
+		root = filepath.Clean(strings.TrimSpace(root))
+		if root == "" {
+			continue
+		}
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		info, err := fs.Stat(root)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		seen[root] = struct{}{}
+		out = append(out, root)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *Service) adapterFor(target domain.Tool) (domain.TargetAdapter, error) {

@@ -7,13 +7,21 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/jaeyoung0509/work-bridge/internal/catalog"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
 	"github.com/jaeyoung0509/work-bridge/internal/switcher"
 )
 
 type fakeBackend struct {
 	workspace   switcher.Workspace
+	workspaces  map[string]switcher.Workspace
 	loadErr     error
+	projects    []catalog.ProjectEntry
+	projectsErr error
+	skills      []catalog.SkillEntry
+	skillsErr   error
+	mcp         []catalog.MCPEntry
+	mcpErr      error
 	previewResp switcher.Result
 	previewErr  error
 	applyResp   switcher.Result
@@ -21,14 +29,33 @@ type fakeBackend struct {
 	exportResp  switcher.Result
 	exportErr   error
 
-	previewCalls []switcher.Request
-	applyCalls   []switcher.Request
-	exportCalls  []switcher.Request
-	exportDirs   []string
+	loadWorkspaceRoots []string
+	previewCalls       []switcher.Request
+	applyCalls         []switcher.Request
+	exportCalls        []switcher.Request
+	exportDirs         []string
 }
 
-func (f *fakeBackend) LoadWorkspace(context.Context) (switcher.Workspace, error) {
+func (f *fakeBackend) LoadWorkspace(_ context.Context, projectRoot string) (switcher.Workspace, error) {
+	f.loadWorkspaceRoots = append(f.loadWorkspaceRoots, projectRoot)
+	if f.workspaces != nil {
+		if ws, ok := f.workspaces[projectRoot]; ok {
+			return ws, f.loadErr
+		}
+	}
 	return f.workspace, f.loadErr
+}
+
+func (f *fakeBackend) LoadProjects(context.Context, []string) ([]catalog.ProjectEntry, error) {
+	return append([]catalog.ProjectEntry{}, f.projects...), f.projectsErr
+}
+
+func (f *fakeBackend) LoadSkills(context.Context, string) ([]catalog.SkillEntry, error) {
+	return append([]catalog.SkillEntry{}, f.skills...), f.skillsErr
+}
+
+func (f *fakeBackend) LoadMCP(context.Context, string) ([]catalog.MCPEntry, error) {
+	return append([]catalog.MCPEntry{}, f.mcp...), f.mcpErr
 }
 
 func (f *fakeBackend) Preview(_ context.Context, req switcher.Request) (switcher.Result, error) {
@@ -249,6 +276,67 @@ func TestMainModelAllowsSameToolTargetSelection(t *testing.T) {
 	}
 }
 
+func TestMainModelSlashCommandOpensSkillsBrowser(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	model, _ := bootstrapModel(t, backend)
+	model = typeCommand(t, model, "/skills")
+
+	if model.state != StateSkills {
+		t.Fatalf("expected skills state, got %v", model.state)
+	}
+	if len(model.skills) != 1 {
+		t.Fatalf("expected one skill entry, got %d", len(model.skills))
+	}
+	view := model.View().Content
+	if !strings.Contains(view, "refactor-review") {
+		t.Fatalf("expected skill name in view, got %q", view)
+	}
+}
+
+func TestMainModelSlashCommandOpensMCPBrowser(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	model, _ := bootstrapModel(t, backend)
+	model = typeCommand(t, model, "/mcp")
+
+	if model.state != StateMCP {
+		t.Fatalf("expected mcp state, got %v", model.state)
+	}
+	view := model.View().Content
+	if !strings.Contains(view, "/repo/project/.claude/settings.json") {
+		t.Fatalf("expected MCP path in view, got %q", view)
+	}
+}
+
+func TestMainModelProjectsCommandSwitchesWorkspace(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	model, backend := bootstrapModel(t, backend)
+	model = typeCommand(t, model, "/projects")
+	if model.state != StateProjects {
+		t.Fatalf("expected projects state, got %v", model.state)
+	}
+
+	model = runKey(t, model, specialKey(tea.KeyEnter))
+
+	if model.state != StateSelectSession {
+		t.Fatalf("expected session state after switching project, got %v", model.state)
+	}
+	if model.workspace.ProjectRoot != "/repo/other" {
+		t.Fatalf("expected project root to switch, got %q", model.workspace.ProjectRoot)
+	}
+	if len(model.workspace.Sessions) != 1 || model.workspace.Sessions[0].ID != "session-2" {
+		t.Fatalf("expected switched workspace sessions, got %#v", model.workspace.Sessions)
+	}
+	if got := backend.loadWorkspaceRoots[len(backend.loadWorkspaceRoots)-1]; got != "/repo/other" {
+		t.Fatalf("expected project reload for /repo/other, got %q", got)
+	}
+}
+
 func bootstrapModel(t *testing.T, backend *fakeBackend) (MainModel, *fakeBackend) {
 	t.Helper()
 
@@ -276,14 +364,11 @@ func previewReadyModel(t *testing.T, backend *fakeBackend, opts Options) (MainMo
 
 func processCmd(t *testing.T, model MainModel, cmd tea.Cmd) MainModel {
 	t.Helper()
-	if cmd == nil {
-		return model
-	}
-	msg := runCmd(t, cmd)
-	updated, followup := model.Update(msg)
-	model = updated.(MainModel)
-	if followup != nil {
-		t.Fatalf("unexpected nested follow-up command")
+	for cmd != nil {
+		msg := runCmd(t, cmd)
+		updated, followup := model.Update(msg)
+		model = updated.(MainModel)
+		cmd = followup
 	}
 	return model
 }
@@ -377,8 +462,77 @@ func newFakeBackend() *fakeBackend {
 				},
 			},
 		},
+		workspaces: map[string]switcher.Workspace{
+			"": {
+				ProjectRoot: "/repo/project",
+				Sessions: []switcher.WorkspaceItem{
+					{
+						Tool:        domain.ToolCodex,
+						ID:          "session-1",
+						Title:       "Codex task",
+						ProjectRoot: "/repo/project",
+					},
+				},
+			},
+			"/repo/project": {
+				ProjectRoot: "/repo/project",
+				Sessions: []switcher.WorkspaceItem{
+					{
+						Tool:        domain.ToolCodex,
+						ID:          "session-1",
+						Title:       "Codex task",
+						ProjectRoot: "/repo/project",
+					},
+				},
+			},
+			"/repo/other": {
+				ProjectRoot: "/repo/other",
+				Sessions: []switcher.WorkspaceItem{
+					{
+						Tool:        domain.ToolGemini,
+						ID:          "session-2",
+						Title:       "Gemini task",
+						ProjectRoot: "/repo/other",
+					},
+				},
+			},
+		},
+		projects: []catalog.ProjectEntry{
+			{
+				Name:          "other",
+				Root:          "/repo/other",
+				WorkspaceRoot: "/repo",
+				Markers:       []string{"git", "gemini"},
+			},
+		},
+		skills: []catalog.SkillEntry{
+			{
+				Name:        "refactor-review",
+				Description: "Review migration readiness",
+				EntryPath:   "/repo/project/.agents/skills/refactor-review/SKILL.md",
+				Source:      "project .agents/skills",
+				Scope:       "project",
+			},
+		},
+		mcp: []catalog.MCPEntry{
+			{
+				Name:    "project claude settings",
+				Path:    "/repo/project/.claude/settings.json",
+				Source:  "project",
+				Status:  "present",
+				Details: "settings.json",
+			},
+		},
 		previewResp: preview,
 		applyResp:   action,
 		exportResp:  action,
 	}
+}
+
+func typeCommand(t *testing.T, model MainModel, command string) MainModel {
+	t.Helper()
+	for _, r := range command {
+		model = runKey(t, model, runeKey(string(r)))
+	}
+	return runKey(t, model, specialKey(tea.KeyEnter))
 }

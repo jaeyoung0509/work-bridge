@@ -7,14 +7,19 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/jaeyoung0509/work-bridge/internal/catalog"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
 	"github.com/jaeyoung0509/work-bridge/internal/switcher"
 	"github.com/jaeyoung0509/work-bridge/internal/ui/styles"
+	"github.com/jaeyoung0509/work-bridge/internal/ui/views/browser"
 	"github.com/jaeyoung0509/work-bridge/internal/ui/views/session"
 )
 
 type Backend interface {
-	LoadWorkspace(ctx context.Context) (switcher.Workspace, error)
+	LoadWorkspace(ctx context.Context, projectRoot string) (switcher.Workspace, error)
+	LoadProjects(ctx context.Context, roots []string) ([]catalog.ProjectEntry, error)
+	LoadSkills(ctx context.Context, projectRoot string) ([]catalog.SkillEntry, error)
+	LoadMCP(ctx context.Context, projectRoot string) ([]catalog.MCPEntry, error)
 	Preview(ctx context.Context, req switcher.Request) (switcher.Result, error)
 	Apply(ctx context.Context, req switcher.Request) (switcher.Result, error)
 	Export(ctx context.Context, req switcher.Request, outDir string) (switcher.Result, error)
@@ -22,6 +27,7 @@ type Backend interface {
 
 type Options struct {
 	ProjectRoot      string
+	WorkspaceRoots   []string
 	DefaultExportDir string
 }
 
@@ -33,6 +39,9 @@ const (
 	StatePreview
 	StateConfirm
 	StateResult
+	StateProjects
+	StateSkills
+	StateMCP
 )
 
 type actionKind int
@@ -43,6 +52,9 @@ const (
 	actionPreview
 	actionApply
 	actionExport
+	actionLoadProjects
+	actionLoadSkills
+	actionLoadMCP
 )
 
 type optionRow string
@@ -87,6 +99,14 @@ type MainModel struct {
 	confirmInput    string
 	confirmCursor   int
 	showHelp        bool
+	commandActive   bool
+	commandInput    string
+	commandCursor   int
+	browserView     browser.Model
+	browserReturn   AppState
+	projects        []catalog.ProjectEntry
+	skills          []catalog.SkillEntry
+	mcpEntries      []catalog.MCPEntry
 	quitting        bool
 	width           int
 	height          int
@@ -108,6 +128,21 @@ type actionFinishedMsg struct {
 	err    error
 }
 
+type projectsLoadedMsg struct {
+	entries []catalog.ProjectEntry
+	err     error
+}
+
+type skillsLoadedMsg struct {
+	entries []catalog.SkillEntry
+	err     error
+}
+
+type mcpLoadedMsg struct {
+	entries []catalog.MCPEntry
+	err     error
+}
+
 func NewMainModel(ctx context.Context, backend Backend, opts Options) MainModel {
 	return MainModel{
 		ctx:           ctx,
@@ -115,6 +150,7 @@ func NewMainModel(ctx context.Context, backend Backend, opts Options) MainModel 
 		options:       opts,
 		state:         StateSelectSession,
 		sessionView:   session.NewModel(),
+		browserView:   browser.NewModel("Browser"),
 		running:       actionLoadWorkspace,
 		mode:          domain.SwitchModeProject,
 		includeSkills: true,
@@ -123,7 +159,7 @@ func NewMainModel(ctx context.Context, backend Backend, opts Options) MainModel 
 }
 
 func (m MainModel) Init() tea.Cmd {
-	return m.loadWorkspaceCmd()
+	return m.loadWorkspaceCmd(m.options.ProjectRoot)
 }
 
 func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -133,9 +169,15 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		updated, cmd := m.sessionView.Update(msg)
 		m.sessionView = updated.(session.Model)
+		m.browserView.SetSize(msg.Width, msg.Height)
 		return m, cmd
 
 	case tea.KeyPressMsg:
+		if m.commandActive {
+			if handled, model, cmd := m.handleCommandKey(msg); handled {
+				return model, cmd
+			}
+		}
 		if handled, model, cmd := m.handleGlobalKey(msg); handled {
 			return model, cmd
 		}
@@ -143,6 +185,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case workspaceLoadedMsg:
 		m.running = actionNone
 		m.workspace = msg.workspace
+		m.options.ProjectRoot = msg.workspace.ProjectRoot
 		m.lastErr = msg.err
 		if msg.err == nil {
 			m.sessionView.SetSessions(msg.workspace.Sessions)
@@ -174,6 +217,42 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case session.SessionSelectedMsg:
 		m.selectSession(msg.Session)
 		return m, nil
+
+	case projectsLoadedMsg:
+		m.running = actionNone
+		m.projects = msg.entries
+		m.lastErr = msg.err
+		if msg.err == nil {
+			m.state = StateProjects
+			m.browserView.SetTitle("Projects")
+			m.browserView.SetEntries(projectEntries(msg.entries))
+		}
+		return m, nil
+
+	case skillsLoadedMsg:
+		m.running = actionNone
+		m.skills = msg.entries
+		m.lastErr = msg.err
+		if msg.err == nil {
+			m.state = StateSkills
+			m.browserView.SetTitle("Skills")
+			m.browserView.SetEntries(skillEntries(msg.entries))
+		}
+		return m, nil
+
+	case mcpLoadedMsg:
+		m.running = actionNone
+		m.mcpEntries = msg.entries
+		m.lastErr = msg.err
+		if msg.err == nil {
+			m.state = StateMCP
+			m.browserView.SetTitle("MCP")
+			m.browserView.SetEntries(mcpEntries(msg.entries))
+		}
+		return m, nil
+
+	case browser.SelectedMsg:
+		return m.handleBrowserSelection(msg.Entry)
 	}
 
 	switch m.state {
@@ -187,6 +266,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateConfirmState(msg)
 	case StateResult:
 		return m.updateResultState(msg)
+	case StateProjects, StateSkills, StateMCP:
+		return m.updateBrowserState(msg)
 	default:
 		return m, nil
 	}
@@ -208,16 +289,28 @@ func (m MainModel) View() tea.View {
 			m.renderFooter(),
 		}, "\n\n")
 		if m.showHelp {
-			content = strings.Join([]string{content, m.renderHelp()}, "\n\n")
+			content = strings.Join([]string{content, styles.HelpBox.Render(m.renderHelp())}, "\n\n")
+		}
+		if m.commandActive {
+			content = strings.Join([]string{content, m.renderCommandPalette()}, "\n\n")
 		}
 	}
 
 	view := tea.NewView(styles.AppContainer.Render(content))
 	view.AltScreen = true
+	view.MouseMode = tea.MouseModeAllMotion
 	return view
 }
 
 func (m MainModel) handleGlobalKey(msg tea.KeyPressMsg) (bool, tea.Model, tea.Cmd) {
+	if key := msg.Key(); key.Mod == 0 && strings.HasPrefix(key.Text, "/") {
+		m.commandActive = true
+		m.commandInput = key.Text
+		m.commandCursor = len([]rune(m.commandInput))
+		m.lastErr = nil
+		return true, m, nil
+	}
+
 	switch msg.String() {
 	case "ctrl+c", "q":
 		m.quitting = true
@@ -232,11 +325,102 @@ func (m MainModel) handleGlobalKey(msg tea.KeyPressMsg) (bool, tea.Model, tea.Cm
 	return false, m, nil
 }
 
+func (m MainModel) handleCommandKey(msg tea.KeyPressMsg) (bool, tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.commandActive = false
+		m.commandInput = ""
+		m.commandCursor = 0
+		return true, m, nil
+	case "enter":
+		commandInput := m.commandInput
+		m.commandActive = false
+		m.commandInput = ""
+		m.commandCursor = 0
+		fields := strings.Fields(strings.TrimSpace(commandInput))
+		if len(fields) == 0 {
+			m.lastErr = fmt.Errorf("slash command is required")
+			return true, m, nil
+		}
+		return true, m, m.dispatchCommand(strings.ToLower(fields[0]))
+	case "left":
+		if m.commandCursor > 0 {
+			m.commandCursor--
+		}
+		return true, m, nil
+	case "right":
+		if m.commandCursor < len([]rune(m.commandInput)) {
+			m.commandCursor++
+		}
+		return true, m, nil
+	case "home":
+		m.commandCursor = 0
+		return true, m, nil
+	case "end":
+		m.commandCursor = len([]rune(m.commandInput))
+		return true, m, nil
+	case "backspace":
+		if m.commandCursor == 0 {
+			return true, m, nil
+		}
+		runes := []rune(m.commandInput)
+		runes = append(runes[:m.commandCursor-1], runes[m.commandCursor:]...)
+		m.commandCursor--
+		m.commandInput = string(runes)
+		return true, m, nil
+	case "delete":
+		runes := []rune(m.commandInput)
+		if m.commandCursor >= len(runes) {
+			return true, m, nil
+		}
+		runes = append(runes[:m.commandCursor], runes[m.commandCursor+1:]...)
+		m.commandInput = string(runes)
+		return true, m, nil
+	}
+
+	key := msg.Key()
+	if key.Text == "" || key.Mod != 0 {
+		return true, m, nil
+	}
+	runes := []rune(m.commandInput)
+	insert := []rune(key.Text)
+	head := append([]rune{}, runes[:m.commandCursor]...)
+	head = append(head, insert...)
+	head = append(head, runes[m.commandCursor:]...)
+	m.commandInput = string(head)
+	m.commandCursor += len(insert)
+	return true, m, nil
+}
+
+func (m *MainModel) dispatchCommand(command string) tea.Cmd {
+	if command == "" {
+		m.lastErr = fmt.Errorf("slash command is required")
+		return nil
+	}
+
+	m.browserReturn = m.state
+	m.lastErr = nil
+	switch command {
+	case "/projects":
+		m.running = actionLoadProjects
+		return m.loadProjectsCmd()
+	case "/skills":
+		m.running = actionLoadSkills
+		return m.loadSkillsCmd(m.projectRoot())
+	case "/mcp":
+		m.running = actionLoadMCP
+		return m.loadMCPCmd(m.projectRoot())
+	default:
+		m.lastErr = fmt.Errorf("unknown slash command %q", command)
+		return nil
+	}
+}
+
 func (m MainModel) updateSessionState(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "r" {
 		m.running = actionLoadWorkspace
 		m.lastErr = nil
-		return m, m.loadWorkspaceCmd()
+		return m, m.loadWorkspaceCmd(m.projectRoot())
 	}
 	updated, cmd := m.sessionView.Update(msg)
 	m.sessionView = updated.(session.Model)
@@ -377,6 +561,47 @@ func (m MainModel) updateResultState(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m MainModel) updateBrowserState(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		switch keyMsg.String() {
+		case "esc":
+			m.state = m.browserReturn
+			m.lastErr = nil
+			return m, nil
+		case "r":
+			switch m.state {
+			case StateProjects:
+				m.running = actionLoadProjects
+				return m, m.loadProjectsCmd()
+			case StateSkills:
+				m.running = actionLoadSkills
+				return m, m.loadSkillsCmd(m.projectRoot())
+			case StateMCP:
+				m.running = actionLoadMCP
+				return m, m.loadMCPCmd(m.projectRoot())
+			}
+		}
+	}
+
+	updated, cmd := m.browserView.Update(msg)
+	m.browserView = updated.(browser.Model)
+	return m, cmd
+}
+
+func (m MainModel) handleBrowserSelection(entry browser.Entry) (tea.Model, tea.Cmd) {
+	if m.state != StateProjects {
+		return m, nil
+	}
+	if strings.TrimSpace(entry.Key) == "" {
+		return m, nil
+	}
+	m.running = actionLoadWorkspace
+	m.lastErr = nil
+	m.resetSelection()
+	m.options.ProjectRoot = entry.Key
+	return m, m.loadWorkspaceCmd(entry.Key)
+}
+
 func (m *MainModel) selectSession(item switcher.WorkspaceItem) {
 	m.selectedSession = &item
 	m.target = defaultTargetFor(item.Tool)
@@ -409,12 +634,34 @@ func (m *MainModel) resetSelection() {
 	m.confirmAction = actionNone
 	m.confirmInput = ""
 	m.confirmCursor = 0
+	m.browserReturn = StateSelectSession
 }
 
-func (m MainModel) loadWorkspaceCmd() tea.Cmd {
+func (m MainModel) loadWorkspaceCmd(projectRoot string) tea.Cmd {
 	return func() tea.Msg {
-		ws, err := m.backend.LoadWorkspace(m.ctx)
+		ws, err := m.backend.LoadWorkspace(m.ctx, projectRoot)
 		return workspaceLoadedMsg{workspace: ws, err: err}
+	}
+}
+
+func (m MainModel) loadProjectsCmd() tea.Cmd {
+	return func() tea.Msg {
+		entries, err := m.backend.LoadProjects(m.ctx, m.options.WorkspaceRoots)
+		return projectsLoadedMsg{entries: entries, err: err}
+	}
+}
+
+func (m MainModel) loadSkillsCmd(projectRoot string) tea.Cmd {
+	return func() tea.Msg {
+		entries, err := m.backend.LoadSkills(m.ctx, projectRoot)
+		return skillsLoadedMsg{entries: entries, err: err}
+	}
+}
+
+func (m MainModel) loadMCPCmd(projectRoot string) tea.Cmd {
+	return func() tea.Msg {
+		entries, err := m.backend.LoadMCP(m.ctx, projectRoot)
+		return mcpLoadedMsg{entries: entries, err: err}
 	}
 }
 
@@ -587,6 +834,8 @@ func (m MainModel) renderCurrentState() string {
 		return m.renderConfirmState()
 	case StateResult:
 		return m.renderResultState()
+	case StateProjects, StateSkills, StateMCP:
+		return m.renderBrowserState()
 	default:
 		return ""
 	}
@@ -600,6 +849,7 @@ func (m MainModel) renderHeader() string {
 	if m.selectedSession != nil {
 		lines = append(lines, styles.Muted.Render(fmt.Sprintf("source %s/%s -> target %s", m.selectedSession.Tool, m.selectedSession.ID, m.target)))
 	}
+	lines = append(lines, styles.Muted.Render("commands: /projects  /mcp  /skills"))
 	return styles.Section.Render(strings.Join(lines, "\n"))
 }
 
@@ -625,6 +875,10 @@ func (m MainModel) footerText() string {
 		return "enter confirm  esc cancel"
 	case StateResult:
 		return "b back to preview  n new session  ? help  q quit"
+	case StateProjects:
+		return "up/down move  enter switch project  r refresh  esc back  / slash commands"
+	case StateSkills, StateMCP:
+		return "up/down move  enter inspect  r refresh  esc back  / slash commands"
 	default:
 		return ""
 	}
@@ -766,6 +1020,37 @@ func (m MainModel) renderResultState() string {
 	return styles.Panel.Render(strings.Join(lines, "\n"))
 }
 
+func (m MainModel) renderBrowserState() string {
+	title := "Browser"
+	empty := "No entries found."
+	switch m.state {
+	case StateProjects:
+		title = "Projects"
+		empty = "No projects found. Configure --workspace-roots or WORK_BRIDGE_WORKSPACE_ROOTS to widen project discovery."
+	case StateSkills:
+		title = "Skills"
+		empty = "No skills found for this project or user scope."
+	case StateMCP:
+		title = "MCP"
+		empty = "No MCP configs found for this project or user scope."
+	}
+	if m.lastErr != nil {
+		return styles.ErrorBox.Render(title + " failed.\n\n" + m.lastErr.Error())
+	}
+	selected, hasSelected := m.browserView.SelectedEntry()
+	if !hasSelected {
+		return styles.Panel.Render(empty)
+	}
+	lines := []string{
+		styles.SectionTitle.Render(title),
+		m.browserView.View().Content,
+		"",
+		styles.SectionTitle.Render("Details"),
+	}
+	lines = append(lines, selected.Details...)
+	return styles.Panel.Render(strings.Join(lines, "\n"))
+}
+
 func (m MainModel) renderBusyView() string {
 	label := "Working..."
 	switch m.running {
@@ -777,6 +1062,12 @@ func (m MainModel) renderBusyView() string {
 		label = "Applying handoff..."
 	case actionExport:
 		label = "Exporting handoff..."
+	case actionLoadProjects:
+		label = "Scanning projects..."
+	case actionLoadSkills:
+		label = "Scanning skills..."
+	case actionLoadMCP:
+		label = "Scanning MCP..."
 	}
 	return styles.Panel.Render(label)
 }
@@ -817,6 +1108,22 @@ func (m MainModel) renderHelp() string {
 			"- `b` returns to preview using the same selections.",
 			"- `n` starts over from the session list.",
 		}
+	case StateProjects, StateSkills, StateMCP:
+		lines = []string{
+			"Browser step",
+			"- Type `/projects`, `/skills`, or `/mcp` from anywhere to jump here.",
+			"- Arrow keys move through the list and mouse interactions are forwarded to the active list.",
+			"- `esc` returns to the previous migration screen.",
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m MainModel) renderCommandPalette() string {
+	lines := []string{
+		styles.SectionTitle.Render("Slash Commands"),
+		styles.InputBox.Render(m.commandInputWithCursor()),
+		styles.Muted.Render("/projects  /mcp  /skills"),
 	}
 	return styles.HelpBox.Render(strings.Join(lines, "\n"))
 }
@@ -833,6 +1140,21 @@ func (m MainModel) confirmInputWithCursor() string {
 	rendered := append([]rune{}, runes[:m.confirmCursor]...)
 	rendered = append(rendered, []rune(cursor)...)
 	rendered = append(rendered, runes[m.confirmCursor:]...)
+	return string(rendered)
+}
+
+func (m MainModel) commandInputWithCursor() string {
+	runes := []rune(m.commandInput)
+	if m.commandCursor < 0 {
+		m.commandCursor = 0
+	}
+	if m.commandCursor > len(runes) {
+		m.commandCursor = len(runes)
+	}
+	cursor := styles.Cursor.Render(" ")
+	rendered := append([]rune{}, runes[:m.commandCursor]...)
+	rendered = append(rendered, []rune(cursor)...)
+	rendered = append(rendered, runes[m.commandCursor:]...)
 	return string(rendered)
 }
 
@@ -903,4 +1225,81 @@ func collectWarnings(values []string, extras []string) []string {
 		result = append(result, value)
 	}
 	return result
+}
+
+func projectEntries(entries []catalog.ProjectEntry) []browser.Entry {
+	out := make([]browser.Entry, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, browser.Entry{
+			Key:         entry.Root,
+			Title:       entry.Name,
+			Description: strings.Join([]string{entry.WorkspaceRoot, strings.Join(entry.Markers, ", ")}, " • "),
+			FilterValue: strings.Join([]string{entry.Name, entry.Root, strings.Join(entry.Markers, " ")}, " "),
+			Details: []string{
+				fmt.Sprintf("root: %s", entry.Root),
+				fmt.Sprintf("workspace: %s", entry.WorkspaceRoot),
+				fmt.Sprintf("markers: %s", strings.Join(entry.Markers, ", ")),
+			},
+		})
+	}
+	return out
+}
+
+func skillEntries(entries []catalog.SkillEntry) []browser.Entry {
+	out := make([]browser.Entry, 0, len(entries))
+	for _, entry := range entries {
+		description := strings.TrimSpace(entry.Description)
+		if description == "" {
+			description = entry.Source
+		}
+		details := []string{
+			fmt.Sprintf("scope: %s", firstNonEmpty(entry.Scope, "unknown")),
+			fmt.Sprintf("source: %s", firstNonEmpty(entry.Source, "unknown")),
+			fmt.Sprintf("tool: %s", firstNonEmpty(entry.Tool, "shared")),
+			fmt.Sprintf("entry: %s", entry.EntryPath),
+		}
+		if len(entry.Files) > 0 {
+			details = append(details, fmt.Sprintf("files: %d", len(entry.Files)))
+		}
+		out = append(out, browser.Entry{
+			Key:         entry.EntryPath,
+			Title:       entry.Name,
+			Description: description,
+			FilterValue: strings.Join([]string{entry.Name, entry.Description, entry.EntryPath, entry.Source}, " "),
+			Details:     details,
+		})
+	}
+	return out
+}
+
+func mcpEntries(entries []catalog.MCPEntry) []browser.Entry {
+	out := make([]browser.Entry, 0, len(entries))
+	for _, entry := range entries {
+		description := strings.TrimSpace(entry.Details)
+		if description == "" {
+			description = entry.Source
+		}
+		out = append(out, browser.Entry{
+			Key:         entry.Path,
+			Title:       entry.Name,
+			Description: description,
+			FilterValue: strings.Join([]string{entry.Name, entry.Path, entry.Source, entry.Status}, " "),
+			Details: []string{
+				fmt.Sprintf("path: %s", entry.Path),
+				fmt.Sprintf("scope: %s", entry.Source),
+				fmt.Sprintf("status: %s", entry.Status),
+				fmt.Sprintf("details: %s", firstNonEmpty(entry.Details, "-")),
+			},
+		})
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
