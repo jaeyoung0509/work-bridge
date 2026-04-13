@@ -801,31 +801,44 @@ func (a *projectAdapter) writeSkillBundle(targetDir string, skill domain.SkillPa
 		return nil, nil, fmt.Errorf("skill bundle %q is missing root_path or entry_path", skill.Name)
 	}
 
+	var mu sync.Mutex
 	updated := []string{}
 	backups := []string{}
+	var g errgroup.Group
+	g.SetLimit(10) // Limit concurrency for file I/O
+
 	for _, src := range skillFilesForPayload(skill) {
-		rel, err := filepath.Rel(skill.RootPath, src)
-		if err != nil {
-			return nil, nil, err
-		}
-		rel = filepath.Clean(rel)
-		if rel == "." || strings.HasPrefix(rel, "..") {
-			return nil, nil, fmt.Errorf("skill bundle %q contains out-of-root file %s", skill.Name, src)
-		}
-		data, err := a.fs.ReadFile(src)
-		if err != nil {
-			return nil, nil, err
-		}
-		changed, backup, err := a.writeFile(filepath.Join(targetDir, rel), string(data))
-		if err != nil {
-			return nil, nil, err
-		}
-		if changed {
-			updated = append(updated, filepath.Join(targetDir, rel))
-		}
-		if backup != "" {
-			backups = append(backups, backup)
-		}
+		srcFile := src // capture
+		g.Go(func() error {
+			rel, err := filepath.Rel(skill.RootPath, srcFile)
+			if err != nil {
+				return err
+			}
+			rel = filepath.Clean(rel)
+			if rel == "." || strings.HasPrefix(rel, "..") {
+				return fmt.Errorf("skill bundle %q contains out-of-root file %s", skill.Name, srcFile)
+			}
+			data, err := a.fs.ReadFile(srcFile)
+			if err != nil {
+				return err
+			}
+			changed, backup, err := a.writeFile(filepath.Join(targetDir, rel), string(data))
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			if changed {
+				updated = append(updated, filepath.Join(targetDir, rel))
+			}
+			if backup != "" {
+				backups = append(backups, backup)
+			}
+			mu.Unlock()
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, nil, err
 	}
 	return dedupeStrings(updated), dedupeStrings(backups), nil
 }
