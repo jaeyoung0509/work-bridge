@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	gotoml "github.com/pelletier/go-toml/v2"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/jaeyoung0509/work-bridge/internal/doctor"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
@@ -59,7 +61,7 @@ func (a *projectAdapter) previewProject(payload domain.SwitchPayload, projectRoo
 		destinationRoot = destinationOverride
 	}
 	managed := managedRoot(destinationRoot, a.target)
-	instructionPath := a.instructionPath(destinationRoot)
+	instructionPath := getLocator(a.target).InstructionPath(destinationRoot)
 	sessionFiles := append(bundleManagedFiles(payload.Bundle, report, managed), instructionPath)
 	projectSkills := projectScopedSkills(payload.Skills)
 	skillFiles := a.skillFiles(destinationRoot, projectSkills)
@@ -163,40 +165,62 @@ func (a *projectAdapter) applyPlan(payload domain.SwitchPayload, plan domain.Swi
 		},
 	}
 
-	exportManifest, changed, backups, err := a.writeSessionArtifacts(payload.Bundle, plan)
-	if err != nil {
-		return report, err
-	}
-	report.FilesUpdated = append(report.FilesUpdated, changed...)
-	report.BackupsCreated = append(report.BackupsCreated, backups...)
-	report.Session.Files = append(report.Session.Files, changed...)
-	report.Session.Summary = fmt.Sprintf("%d session files applied", len(exportManifest.Files))
+	var mu sync.Mutex
+	var g errgroup.Group
 
-	skillChanged, skillBackups, skillWarnings, err := a.writeSkills(payload, plan)
-	if err != nil {
-		return report, err
-	}
-	report.FilesUpdated = append(report.FilesUpdated, skillChanged...)
-	report.BackupsCreated = append(report.BackupsCreated, skillBackups...)
-	report.Skills.Files = append(report.Skills.Files, skillChanged...)
-	report.Skills.Summary = fmt.Sprintf("%d skill files applied", len(skillChanged))
-	report.Warnings = append(report.Warnings, skillWarnings...)
-	if len(payload.Skills) == 0 {
-		report.Skills.Summary = "No skills selected"
-	}
+	g.Go(func() error {
+		exportManifest, changed, backups, err := a.writeSessionArtifacts(payload.Bundle, plan)
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		report.FilesUpdated = append(report.FilesUpdated, changed...)
+		report.BackupsCreated = append(report.BackupsCreated, backups...)
+		report.Session.Files = append(report.Session.Files, changed...)
+		report.Session.Summary = fmt.Sprintf("%d session files applied", len(exportManifest.Files))
+		return nil
+	})
 
-	mcpChanged, mcpBackups, mcpWarnings, mcpState, err := a.writeMCP(payload, plan)
-	if err != nil {
+	g.Go(func() error {
+		skillChanged, skillBackups, skillWarnings, err := a.writeSkills(payload, plan)
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		report.FilesUpdated = append(report.FilesUpdated, skillChanged...)
+		report.BackupsCreated = append(report.BackupsCreated, skillBackups...)
+		report.Skills.Files = append(report.Skills.Files, skillChanged...)
+		report.Skills.Summary = fmt.Sprintf("%d skill files applied", len(skillChanged))
+		report.Warnings = append(report.Warnings, skillWarnings...)
+		if len(payload.Skills) == 0 {
+			report.Skills.Summary = "No skills selected"
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		mcpChanged, mcpBackups, mcpWarnings, mcpState, err := a.writeMCP(payload, plan)
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		report.FilesUpdated = append(report.FilesUpdated, mcpChanged...)
+		report.BackupsCreated = append(report.BackupsCreated, mcpBackups...)
+		report.MCP.Files = append(report.MCP.Files, mcpChanged...)
+		report.MCP.Summary = fmt.Sprintf("%d MCP files applied", len(mcpChanged))
+		report.Warnings = append(report.Warnings, mcpWarnings...)
+		report.MCP.State = mcpState
+		if len(payload.MCP.Servers) == 0 {
+			report.MCP.Summary = "No MCP servers selected"
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
 		return report, err
-	}
-	report.FilesUpdated = append(report.FilesUpdated, mcpChanged...)
-	report.BackupsCreated = append(report.BackupsCreated, mcpBackups...)
-	report.MCP.Files = append(report.MCP.Files, mcpChanged...)
-	report.MCP.Summary = fmt.Sprintf("%d MCP files applied", len(mcpChanged))
-	report.Warnings = append(report.Warnings, mcpWarnings...)
-	report.MCP.State = mcpState
-	if len(payload.MCP.Servers) == 0 {
-		report.MCP.Summary = "No MCP servers selected"
 	}
 
 	instructionChanged, instructionBackups, err := a.writeInstructionFile(payload, plan)
@@ -288,7 +312,7 @@ func (a *projectAdapter) writeSkills(payload domain.SwitchPayload, plan domain.S
 	if len(projectSkills) == 0 {
 		return nil, nil, nil, nil
 	}
-	skillsDir := a.projectSkillRoot(plan.DestinationRoot)
+	skillsDir := getLocator(a.target).ProjectSkillRoot(plan.DestinationRoot)
 	if skillsDir == "" {
 		return nil, nil, []string{fmt.Sprintf("skill bundles are not configured for %s", a.target)}, nil
 	}
@@ -340,7 +364,7 @@ func (a *projectAdapter) writeMCP(payload domain.SwitchPayload, plan domain.Swit
 		backups = append(backups, backup)
 	}
 
-	configPath := a.configPath(plan.DestinationRoot)
+	configPath := getLocator(a.target).ConfigPath(plan.DestinationRoot)
 	if configPath == "" || len(payload.MCP.Servers) == 0 {
 		return dedupeStrings(updated), dedupeStrings(backups), dedupeStrings(warnings), state, nil
 	}
@@ -367,7 +391,7 @@ func (a *projectAdapter) writeMCP(payload domain.SwitchPayload, plan domain.Swit
 }
 
 func (a *projectAdapter) writeInstructionFile(payload domain.SwitchPayload, plan domain.SwitchPlan) ([]string, []string, error) {
-	targetPath := a.instructionPath(plan.DestinationRoot)
+	targetPath := getLocator(a.target).InstructionPath(plan.DestinationRoot)
 	existing, _ := a.fs.ReadFile(targetPath)
 	next := upsertManagedBlock(string(existing), a.renderManagedBlock(payload, plan))
 	changed, backup, err := a.writeFile(targetPath, next)
@@ -428,35 +452,6 @@ func (a *projectAdapter) renderManagedBlock(payload domain.SwitchPayload, plan d
 	}
 	lines = append(lines, managedBlockEnd, "")
 	return strings.Join(lines, "\n")
-}
-
-func (a *projectAdapter) instructionPath(projectRoot string) string {
-	switch a.target {
-	case domain.ToolClaude:
-		return filepath.Join(projectRoot, "CLAUDE.md")
-	case domain.ToolGemini:
-		return filepath.Join(projectRoot, "GEMINI.md")
-	case domain.ToolCodex, domain.ToolOpenCode:
-		return filepath.Join(projectRoot, "AGENTS.md")
-	default:
-		return filepath.Join(projectRoot, "AGENTS.md")
-	}
-}
-
-func (a *projectAdapter) configPath(projectRoot string) string {
-	switch a.target {
-	case domain.ToolClaude:
-		return filepath.Join(projectRoot, ".claude", "settings.local.json")
-	case domain.ToolGemini:
-		return filepath.Join(projectRoot, ".gemini", "settings.json")
-	case domain.ToolOpenCode:
-		return filepath.Join(projectRoot, ".opencode", "opencode.jsonc")
-	case domain.ToolCodex:
-		// Codex stores MCP config in project-local codex.toml when present.
-		return filepath.Join(projectRoot, ".codex", "config.toml")
-	default:
-		return ""
-	}
 }
 
 func (a *projectAdapter) renderTargetConfig(path string, payload domain.MCPPayload) (string, string, error) {
@@ -731,7 +726,7 @@ func (a *projectAdapter) skillFiles(destinationRoot string, skills []domain.Skil
 	if len(skills) == 0 {
 		return nil
 	}
-	skillsRoot := a.projectSkillRoot(destinationRoot)
+	skillsRoot := getLocator(a.target).ProjectSkillRoot(destinationRoot)
 	if skillsRoot == "" {
 		return nil
 	}
@@ -761,7 +756,7 @@ func (a *projectAdapter) skillFiles(destinationRoot string, skills []domain.Skil
 
 func (a *projectAdapter) mcpFiles(projectRoot string, managedRoot string, payload domain.MCPPayload) []string {
 	files := []string{filepath.Join(managedRoot, "mcp.json")}
-	if configPath := a.configPath(projectRoot); configPath != "" && len(payload.Servers) > 0 {
+	if configPath := getLocator(a.target).ConfigPath(projectRoot); configPath != "" && len(payload.Servers) > 0 {
 		files = append(files, configPath)
 	}
 	return files
@@ -776,19 +771,6 @@ func (a *projectAdapter) planChange(path string, section string) domain.PlannedF
 		Path:    path,
 		Action:  action,
 		Section: section,
-	}
-}
-
-func (a *projectAdapter) projectSkillRoot(destinationRoot string) string {
-	switch a.target {
-	case domain.ToolCodex, domain.ToolGemini:
-		return filepath.Join(destinationRoot, ".agents", "skills")
-	case domain.ToolClaude:
-		return filepath.Join(destinationRoot, ".claude", "skills")
-	case domain.ToolOpenCode:
-		return filepath.Join(destinationRoot, ".opencode", "skills")
-	default:
-		return ""
 	}
 }
 
@@ -819,31 +801,44 @@ func (a *projectAdapter) writeSkillBundle(targetDir string, skill domain.SkillPa
 		return nil, nil, fmt.Errorf("skill bundle %q is missing root_path or entry_path", skill.Name)
 	}
 
+	var mu sync.Mutex
 	updated := []string{}
 	backups := []string{}
+	var g errgroup.Group
+	g.SetLimit(10) // Limit concurrency for file I/O
+
 	for _, src := range skillFilesForPayload(skill) {
-		rel, err := filepath.Rel(skill.RootPath, src)
-		if err != nil {
-			return nil, nil, err
-		}
-		rel = filepath.Clean(rel)
-		if rel == "." || strings.HasPrefix(rel, "..") {
-			return nil, nil, fmt.Errorf("skill bundle %q contains out-of-root file %s", skill.Name, src)
-		}
-		data, err := a.fs.ReadFile(src)
-		if err != nil {
-			return nil, nil, err
-		}
-		changed, backup, err := a.writeFile(filepath.Join(targetDir, rel), string(data))
-		if err != nil {
-			return nil, nil, err
-		}
-		if changed {
-			updated = append(updated, filepath.Join(targetDir, rel))
-		}
-		if backup != "" {
-			backups = append(backups, backup)
-		}
+		srcFile := src // capture
+		g.Go(func() error {
+			rel, err := filepath.Rel(skill.RootPath, srcFile)
+			if err != nil {
+				return err
+			}
+			rel = filepath.Clean(rel)
+			if rel == "." || strings.HasPrefix(rel, "..") {
+				return fmt.Errorf("skill bundle %q contains out-of-root file %s", skill.Name, srcFile)
+			}
+			data, err := a.fs.ReadFile(srcFile)
+			if err != nil {
+				return err
+			}
+			changed, backup, err := a.writeFile(filepath.Join(targetDir, rel), string(data))
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			if changed {
+				updated = append(updated, filepath.Join(targetDir, rel))
+			}
+			if backup != "" {
+				backups = append(backups, backup)
+			}
+			mu.Unlock()
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, nil, err
 	}
 	return dedupeStrings(updated), dedupeStrings(backups), nil
 }

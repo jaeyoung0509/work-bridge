@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	toml "github.com/pelletier/go-toml/v2"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/jaeyoung0509/work-bridge/internal/detect"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
@@ -53,18 +54,11 @@ func Import(opts Options) (domain.SessionBundle, error) {
 }
 
 func ImportRaw(opts Options) (RawImportResult, error) {
-	switch opts.Tool {
-	case "codex":
-		return importCodex(opts)
-	case "gemini":
-		return importGemini(opts)
-	case "claude":
-		return importClaude(opts)
-	case "opencode":
-		return importOpenCode(opts)
-	default:
-		return RawImportResult{}, fmt.Errorf("unsupported tool %q", opts.Tool)
+	imp, err := getImporter(opts.Tool)
+	if err != nil {
+		return RawImportResult{}, err
 	}
+	return imp.ImportRaw(opts)
 }
 
 func selectSession(tool string, requested string, sessions []inspect.Session) (inspect.Session, error) {
@@ -86,24 +80,40 @@ func selectSession(tool string, requested string, sessions []inspect.Session) (i
 }
 
 func readInstructionArtifacts(fs fsx.FS, tool domain.Tool, assets []detect.ArtifactProbe) []domain.InstructionArtifact {
-	artifacts := []domain.InstructionArtifact{}
-	for _, asset := range assets {
+	var artifacts []domain.InstructionArtifact
+	var g errgroup.Group
+	g.SetLimit(10)
+
+	results := make([]*domain.InstructionArtifact, len(assets))
+
+	for i, asset := range assets {
 		if asset.Kind != "instruction" || !asset.Found {
 			continue
 		}
-		data, err := fs.ReadFile(asset.Path)
-		if err != nil {
-			continue
-		}
-		sum := sha256.Sum256(data)
-		artifacts = append(artifacts, domain.InstructionArtifact{
-			Tool:        tool,
-			Kind:        "project_instruction",
-			Path:        asset.Path,
-			Scope:       asset.Scope,
-			Content:     string(data),
-			ContentHash: hex.EncodeToString(sum[:]),
+		idx, a := i, asset
+		g.Go(func() error {
+			data, err := fs.ReadFile(a.Path)
+			if err != nil {
+				return nil
+			}
+			sum := sha256.Sum256(data)
+			results[idx] = &domain.InstructionArtifact{
+				Tool:        tool,
+				Kind:        "project_instruction",
+				Path:        a.Path,
+				Scope:       a.Scope,
+				Content:     string(data),
+				ContentHash: hex.EncodeToString(sum[:]),
+			}
+			return nil
 		})
+	}
+	_ = g.Wait()
+
+	for _, res := range results {
+		if res != nil {
+			artifacts = append(artifacts, *res)
+		}
 	}
 	return artifacts
 }
@@ -118,35 +128,55 @@ func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe, policy domai
 		Warnings:   []string{},
 	}
 
-	seenExcluded := map[string]struct{}{}
-	for _, asset := range assets {
+	var g errgroup.Group
+	g.SetLimit(10)
+
+	type fileResult struct {
+		parsed map[string]any
+	}
+	results := make([]*fileResult, len(assets))
+
+	for i, asset := range assets {
 		if asset.Kind != "config" || !asset.Found {
 			continue
 		}
-		data, err := fs.ReadFile(asset.Path)
-		if err != nil {
+		idx, a := i, asset
+		g.Go(func() error {
+			data, err := fs.ReadFile(a.Path)
+			if err != nil {
+				return nil
+			}
+
+			var parsed map[string]any
+			switch strings.ToLower(filepath.Ext(a.Path)) {
+			case ".json":
+				if err := json.Unmarshal(data, &parsed); err != nil {
+					return nil
+				}
+			case ".jsonc":
+				if err := json.Unmarshal(stripJSONCComments(data), &parsed); err != nil {
+					return nil
+				}
+			case ".toml":
+				if err := toml.Unmarshal(data, &parsed); err != nil {
+					return nil
+				}
+			default:
+				return nil
+			}
+			results[idx] = &fileResult{parsed: parsed}
+			return nil
+		})
+	}
+
+	_ = g.Wait()
+
+	seenExcluded := map[string]struct{}{}
+	for _, res := range results {
+		if res == nil || res.parsed == nil {
 			continue
 		}
-
-		var parsed map[string]any
-		switch strings.ToLower(filepath.Ext(asset.Path)) {
-		case ".json":
-			if err := json.Unmarshal(data, &parsed); err != nil {
-				continue
-			}
-		case ".jsonc":
-			if err := json.Unmarshal(stripJSONCComments(data), &parsed); err != nil {
-				continue
-			}
-		case ".toml":
-			if err := toml.Unmarshal(data, &parsed); err != nil {
-				continue
-			}
-		default:
-			continue
-		}
-
-		for key, value := range parsed {
+		for key, value := range res.parsed {
 			if isSensitiveKey(key, policy) {
 				if _, ok := seenExcluded[key]; !ok {
 					result.Snapshot.ExcludedKeys = append(result.Snapshot.ExcludedKeys, key)

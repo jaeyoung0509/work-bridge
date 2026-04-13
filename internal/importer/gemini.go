@@ -9,7 +9,13 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/inspect"
 )
 
-func importGemini(opts Options) (RawImportResult, error) {
+func init() {
+	Register("gemini", &geminiImporter{})
+}
+
+type geminiImporter struct{}
+
+func (i *geminiImporter) ImportRaw(opts Options) (RawImportResult, error) {
 	report, err := inspect.Run(inspectOptions(opts, "gemini"))
 	if err != nil {
 		return RawImportResult{}, err
