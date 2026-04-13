@@ -10,7 +10,13 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/inspect"
 )
 
-func importCodex(opts Options) (RawImportResult, error) {
+func init() {
+	Register("codex", &codexImporter{})
+}
+
+type codexImporter struct{}
+
+func (i *codexImporter) ImportRaw(opts Options) (RawImportResult, error) {
 	report, err := inspect.Run(inspectOptions(opts, "codex"))
 	if err != nil {
 		return RawImportResult{}, err

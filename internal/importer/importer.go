@@ -53,18 +53,11 @@ func Import(opts Options) (domain.SessionBundle, error) {
 }
 
 func ImportRaw(opts Options) (RawImportResult, error) {
-	switch opts.Tool {
-	case "codex":
-		return importCodex(opts)
-	case "gemini":
-		return importGemini(opts)
-	case "claude":
-		return importClaude(opts)
-	case "opencode":
-		return importOpenCode(opts)
-	default:
-		return RawImportResult{}, fmt.Errorf("unsupported tool %q", opts.Tool)
+	imp, err := getImporter(opts.Tool)
+	if err != nil {
+		return RawImportResult{}, err
 	}
+	return imp.ImportRaw(opts)
 }
 
 func selectSession(tool string, requested string, sessions []inspect.Session) (inspect.Session, error) {

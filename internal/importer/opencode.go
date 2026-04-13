@@ -8,7 +8,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func importOpenCode(opts Options) (RawImportResult, error) {
+func init() {
+	Register("opencode", &opencodeImporter{})
+}
+
+type opencodeImporter struct{}
+
+func (i *opencodeImporter) ImportRaw(opts Options) (RawImportResult, error) {
 	report, err := inspect.Run(inspectOptions(opts, "opencode"))
 	if err != nil {
 		return RawImportResult{}, err

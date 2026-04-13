@@ -11,7 +11,13 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 )
 
-func importClaude(opts Options) (RawImportResult, error) {
+func init() {
+	Register("claude", &claudeImporter{})
+}
+
+type claudeImporter struct{}
+
+func (i *claudeImporter) ImportRaw(opts Options) (RawImportResult, error) {
 	report, err := inspect.Run(inspectOptions(opts, "claude"))
 	if err != nil {
 		return RawImportResult{}, err
