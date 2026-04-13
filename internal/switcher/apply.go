@@ -59,7 +59,7 @@ func (a *projectAdapter) previewProject(payload domain.SwitchPayload, projectRoo
 		destinationRoot = destinationOverride
 	}
 	managed := managedRoot(destinationRoot, a.target)
-	instructionPath := a.instructionPath(destinationRoot)
+	instructionPath := getLocator(a.target).InstructionPath(destinationRoot)
 	sessionFiles := append(bundleManagedFiles(payload.Bundle, report, managed), instructionPath)
 	projectSkills := projectScopedSkills(payload.Skills)
 	skillFiles := a.skillFiles(destinationRoot, projectSkills)
@@ -288,7 +288,7 @@ func (a *projectAdapter) writeSkills(payload domain.SwitchPayload, plan domain.S
 	if len(projectSkills) == 0 {
 		return nil, nil, nil, nil
 	}
-	skillsDir := a.projectSkillRoot(plan.DestinationRoot)
+	skillsDir := getLocator(a.target).ProjectSkillRoot(plan.DestinationRoot)
 	if skillsDir == "" {
 		return nil, nil, []string{fmt.Sprintf("skill bundles are not configured for %s", a.target)}, nil
 	}
@@ -340,7 +340,7 @@ func (a *projectAdapter) writeMCP(payload domain.SwitchPayload, plan domain.Swit
 		backups = append(backups, backup)
 	}
 
-	configPath := a.configPath(plan.DestinationRoot)
+	configPath := getLocator(a.target).ConfigPath(plan.DestinationRoot)
 	if configPath == "" || len(payload.MCP.Servers) == 0 {
 		return dedupeStrings(updated), dedupeStrings(backups), dedupeStrings(warnings), state, nil
 	}
@@ -367,7 +367,7 @@ func (a *projectAdapter) writeMCP(payload domain.SwitchPayload, plan domain.Swit
 }
 
 func (a *projectAdapter) writeInstructionFile(payload domain.SwitchPayload, plan domain.SwitchPlan) ([]string, []string, error) {
-	targetPath := a.instructionPath(plan.DestinationRoot)
+	targetPath := getLocator(a.target).InstructionPath(plan.DestinationRoot)
 	existing, _ := a.fs.ReadFile(targetPath)
 	next := upsertManagedBlock(string(existing), a.renderManagedBlock(payload, plan))
 	changed, backup, err := a.writeFile(targetPath, next)
@@ -428,35 +428,6 @@ func (a *projectAdapter) renderManagedBlock(payload domain.SwitchPayload, plan d
 	}
 	lines = append(lines, managedBlockEnd, "")
 	return strings.Join(lines, "\n")
-}
-
-func (a *projectAdapter) instructionPath(projectRoot string) string {
-	switch a.target {
-	case domain.ToolClaude:
-		return filepath.Join(projectRoot, "CLAUDE.md")
-	case domain.ToolGemini:
-		return filepath.Join(projectRoot, "GEMINI.md")
-	case domain.ToolCodex, domain.ToolOpenCode:
-		return filepath.Join(projectRoot, "AGENTS.md")
-	default:
-		return filepath.Join(projectRoot, "AGENTS.md")
-	}
-}
-
-func (a *projectAdapter) configPath(projectRoot string) string {
-	switch a.target {
-	case domain.ToolClaude:
-		return filepath.Join(projectRoot, ".claude", "settings.local.json")
-	case domain.ToolGemini:
-		return filepath.Join(projectRoot, ".gemini", "settings.json")
-	case domain.ToolOpenCode:
-		return filepath.Join(projectRoot, ".opencode", "opencode.jsonc")
-	case domain.ToolCodex:
-		// Codex stores MCP config in project-local codex.toml when present.
-		return filepath.Join(projectRoot, ".codex", "config.toml")
-	default:
-		return ""
-	}
 }
 
 func (a *projectAdapter) renderTargetConfig(path string, payload domain.MCPPayload) (string, string, error) {
@@ -731,7 +702,7 @@ func (a *projectAdapter) skillFiles(destinationRoot string, skills []domain.Skil
 	if len(skills) == 0 {
 		return nil
 	}
-	skillsRoot := a.projectSkillRoot(destinationRoot)
+	skillsRoot := getLocator(a.target).ProjectSkillRoot(destinationRoot)
 	if skillsRoot == "" {
 		return nil
 	}
@@ -761,7 +732,7 @@ func (a *projectAdapter) skillFiles(destinationRoot string, skills []domain.Skil
 
 func (a *projectAdapter) mcpFiles(projectRoot string, managedRoot string, payload domain.MCPPayload) []string {
 	files := []string{filepath.Join(managedRoot, "mcp.json")}
-	if configPath := a.configPath(projectRoot); configPath != "" && len(payload.Servers) > 0 {
+	if configPath := getLocator(a.target).ConfigPath(projectRoot); configPath != "" && len(payload.Servers) > 0 {
 		files = append(files, configPath)
 	}
 	return files
@@ -776,19 +747,6 @@ func (a *projectAdapter) planChange(path string, section string) domain.PlannedF
 		Path:    path,
 		Action:  action,
 		Section: section,
-	}
-}
-
-func (a *projectAdapter) projectSkillRoot(destinationRoot string) string {
-	switch a.target {
-	case domain.ToolCodex, domain.ToolGemini:
-		return filepath.Join(destinationRoot, ".agents", "skills")
-	case domain.ToolClaude:
-		return filepath.Join(destinationRoot, ".claude", "skills")
-	case domain.ToolOpenCode:
-		return filepath.Join(destinationRoot, ".opencode", "skills")
-	default:
-		return ""
 	}
 }
 
