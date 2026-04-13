@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 
 	toml "github.com/pelletier/go-toml/v2"
 	"golang.org/x/sync/errgroup"
@@ -82,21 +81,23 @@ func selectSession(tool string, requested string, sessions []inspect.Session) (i
 
 func readInstructionArtifacts(fs fsx.FS, tool domain.Tool, assets []detect.ArtifactProbe) []domain.InstructionArtifact {
 	var artifacts []domain.InstructionArtifact
-	var mu sync.Mutex
 	var g errgroup.Group
+	g.SetLimit(10)
 
-	for _, asset := range assets {
+	results := make([]*domain.InstructionArtifact, len(assets))
+
+	for i, asset := range assets {
 		if asset.Kind != "instruction" || !asset.Found {
 			continue
 		}
-		a := asset // capture loop variable
+		idx, a := i, asset
 		g.Go(func() error {
 			data, err := fs.ReadFile(a.Path)
 			if err != nil {
 				return nil
 			}
 			sum := sha256.Sum256(data)
-			art := domain.InstructionArtifact{
+			results[idx] = &domain.InstructionArtifact{
 				Tool:        tool,
 				Kind:        "project_instruction",
 				Path:        a.Path,
@@ -104,13 +105,16 @@ func readInstructionArtifacts(fs fsx.FS, tool domain.Tool, assets []detect.Artif
 				Content:     string(data),
 				ContentHash: hex.EncodeToString(sum[:]),
 			}
-			mu.Lock()
-			artifacts = append(artifacts, art)
-			mu.Unlock()
 			return nil
 		})
 	}
 	_ = g.Wait()
+
+	for _, res := range results {
+		if res != nil {
+			artifacts = append(artifacts, *res)
+		}
+	}
 	return artifacts
 }
 
@@ -124,15 +128,19 @@ func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe, policy domai
 		Warnings:   []string{},
 	}
 
-	var mu sync.Mutex
 	var g errgroup.Group
-	seenExcluded := map[string]struct{}{}
+	g.SetLimit(10)
 
-	for _, asset := range assets {
+	type fileResult struct {
+		parsed map[string]any
+	}
+	results := make([]*fileResult, len(assets))
+
+	for i, asset := range assets {
 		if asset.Kind != "config" || !asset.Found {
 			continue
 		}
-		a := asset
+		idx, a := i, asset
 		g.Go(func() error {
 			data, err := fs.ReadFile(a.Path)
 			if err != nil {
@@ -156,35 +164,41 @@ func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe, policy domai
 			default:
 				return nil
 			}
-
-			mu.Lock()
-			defer mu.Unlock()
-			for key, value := range parsed {
-				if isSensitiveKey(key, policy) {
-					if _, ok := seenExcluded[key]; !ok {
-						result.Snapshot.ExcludedKeys = append(result.Snapshot.ExcludedKeys, key)
-						result.Redactions = append(result.Redactions, "settings."+key)
-						seenExcluded[key] = struct{}{}
-					}
-					continue
-				}
-
-				if filtered, ok := simplifySettingValue(value, policy); ok {
-					result.Snapshot.Included[key] = filtered
-					continue
-				}
-
-				if _, ok := seenExcluded[key]; !ok {
-					result.Snapshot.ExcludedKeys = append(result.Snapshot.ExcludedKeys, key)
-					result.Redactions = append(result.Redactions, "settings."+key)
-					seenExcluded[key] = struct{}{}
-				}
-			}
+			results[idx] = &fileResult{parsed: parsed}
 			return nil
 		})
 	}
 
 	_ = g.Wait()
+
+	seenExcluded := map[string]struct{}{}
+	for _, res := range results {
+		if res == nil || res.parsed == nil {
+			continue
+		}
+		for key, value := range res.parsed {
+			if isSensitiveKey(key, policy) {
+				if _, ok := seenExcluded[key]; !ok {
+					result.Snapshot.ExcludedKeys = append(result.Snapshot.ExcludedKeys, key)
+					result.Redactions = append(result.Redactions, "settings."+key)
+					seenExcluded[key] = struct{}{}
+				}
+				continue
+			}
+
+			if filtered, ok := simplifySettingValue(value, policy); ok {
+				result.Snapshot.Included[key] = filtered
+				continue
+			}
+
+			if _, ok := seenExcluded[key]; !ok {
+				result.Snapshot.ExcludedKeys = append(result.Snapshot.ExcludedKeys, key)
+				result.Redactions = append(result.Redactions, "settings."+key)
+				seenExcluded[key] = struct{}{}
+			}
+		}
+	}
+
 	sort.Strings(result.Snapshot.ExcludedKeys)
 	return result
 }
