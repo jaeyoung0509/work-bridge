@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	gotoml "github.com/pelletier/go-toml/v2"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/jaeyoung0509/work-bridge/internal/doctor"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
@@ -163,40 +165,62 @@ func (a *projectAdapter) applyPlan(payload domain.SwitchPayload, plan domain.Swi
 		},
 	}
 
-	exportManifest, changed, backups, err := a.writeSessionArtifacts(payload.Bundle, plan)
-	if err != nil {
-		return report, err
-	}
-	report.FilesUpdated = append(report.FilesUpdated, changed...)
-	report.BackupsCreated = append(report.BackupsCreated, backups...)
-	report.Session.Files = append(report.Session.Files, changed...)
-	report.Session.Summary = fmt.Sprintf("%d session files applied", len(exportManifest.Files))
+	var mu sync.Mutex
+	var g errgroup.Group
 
-	skillChanged, skillBackups, skillWarnings, err := a.writeSkills(payload, plan)
-	if err != nil {
-		return report, err
-	}
-	report.FilesUpdated = append(report.FilesUpdated, skillChanged...)
-	report.BackupsCreated = append(report.BackupsCreated, skillBackups...)
-	report.Skills.Files = append(report.Skills.Files, skillChanged...)
-	report.Skills.Summary = fmt.Sprintf("%d skill files applied", len(skillChanged))
-	report.Warnings = append(report.Warnings, skillWarnings...)
-	if len(payload.Skills) == 0 {
-		report.Skills.Summary = "No skills selected"
-	}
+	g.Go(func() error {
+		exportManifest, changed, backups, err := a.writeSessionArtifacts(payload.Bundle, plan)
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		report.FilesUpdated = append(report.FilesUpdated, changed...)
+		report.BackupsCreated = append(report.BackupsCreated, backups...)
+		report.Session.Files = append(report.Session.Files, changed...)
+		report.Session.Summary = fmt.Sprintf("%d session files applied", len(exportManifest.Files))
+		return nil
+	})
 
-	mcpChanged, mcpBackups, mcpWarnings, mcpState, err := a.writeMCP(payload, plan)
-	if err != nil {
+	g.Go(func() error {
+		skillChanged, skillBackups, skillWarnings, err := a.writeSkills(payload, plan)
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		report.FilesUpdated = append(report.FilesUpdated, skillChanged...)
+		report.BackupsCreated = append(report.BackupsCreated, skillBackups...)
+		report.Skills.Files = append(report.Skills.Files, skillChanged...)
+		report.Skills.Summary = fmt.Sprintf("%d skill files applied", len(skillChanged))
+		report.Warnings = append(report.Warnings, skillWarnings...)
+		if len(payload.Skills) == 0 {
+			report.Skills.Summary = "No skills selected"
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		mcpChanged, mcpBackups, mcpWarnings, mcpState, err := a.writeMCP(payload, plan)
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		report.FilesUpdated = append(report.FilesUpdated, mcpChanged...)
+		report.BackupsCreated = append(report.BackupsCreated, mcpBackups...)
+		report.MCP.Files = append(report.MCP.Files, mcpChanged...)
+		report.MCP.Summary = fmt.Sprintf("%d MCP files applied", len(mcpChanged))
+		report.Warnings = append(report.Warnings, mcpWarnings...)
+		report.MCP.State = mcpState
+		if len(payload.MCP.Servers) == 0 {
+			report.MCP.Summary = "No MCP servers selected"
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
 		return report, err
-	}
-	report.FilesUpdated = append(report.FilesUpdated, mcpChanged...)
-	report.BackupsCreated = append(report.BackupsCreated, mcpBackups...)
-	report.MCP.Files = append(report.MCP.Files, mcpChanged...)
-	report.MCP.Summary = fmt.Sprintf("%d MCP files applied", len(mcpChanged))
-	report.Warnings = append(report.Warnings, mcpWarnings...)
-	report.MCP.State = mcpState
-	if len(payload.MCP.Servers) == 0 {
-		report.MCP.Summary = "No MCP servers selected"
 	}
 
 	instructionChanged, instructionBackups, err := a.writeInstructionFile(payload, plan)
