@@ -39,8 +39,8 @@ func NewMainModel(ctx context.Context, backend *switcher.Service) MainModel {
 	}
 }
 
-func (m MainModel) Init() (tea.Model, tea.Cmd) {
-	return m, m.loadWorkspaceCmd()
+func (m MainModel) Init() tea.Cmd {
+	return m.loadWorkspaceCmd()
 }
 
 func (m MainModel) loadWorkspaceCmd() tea.Cmd {
@@ -82,16 +82,18 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m MainModel) View() string {
+func (m MainModel) View() tea.View {
 	if m.quitting {
-		return "Goodbye!\n"
+		return tea.NewView("Goodbye!\n")
 	}
 
 	var content string
 	switch m.state {
 	case StateSelectSession:
-		content = m.sessionView.View()
+		content = m.sessionView.View().Content
 	}
 
-	return styles.AppContainer.Render(content)
+	view := tea.NewView(styles.AppContainer.Render(content))
+	view.AltScreen = true
+	return view
 }

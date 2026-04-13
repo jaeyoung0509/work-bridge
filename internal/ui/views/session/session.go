@@ -31,8 +31,8 @@ func NewModel() Model {
 	return Model{List: l}
 }
 
-func (m Model) Init() (tea.Model, tea.Cmd) {
-	return m, nil
+func (m Model) Init() tea.Cmd {
+	return nil
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -53,12 +53,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	m.List, cmd = m.List.Update(msg)
+	newList, listCmd := m.List.Update(msg)
+	m.List = newList
+	if listCmd != nil {
+		cmd = func() tea.Msg { return listCmd() }
+	}
 	return m, cmd
 }
 
-func (m Model) View() string {
-	return m.List.View()
+func (m Model) View() tea.View {
+	return tea.NewView(m.List.View())
 }
 
 func (m *Model) SetSessions(sessions []switcher.WorkspaceItem) {
