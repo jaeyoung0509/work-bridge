@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	toml "github.com/pelletier/go-toml/v2"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/jaeyoung0509/work-bridge/internal/detect"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
@@ -79,25 +81,36 @@ func selectSession(tool string, requested string, sessions []inspect.Session) (i
 }
 
 func readInstructionArtifacts(fs fsx.FS, tool domain.Tool, assets []detect.ArtifactProbe) []domain.InstructionArtifact {
-	artifacts := []domain.InstructionArtifact{}
+	var artifacts []domain.InstructionArtifact
+	var mu sync.Mutex
+	var g errgroup.Group
+
 	for _, asset := range assets {
 		if asset.Kind != "instruction" || !asset.Found {
 			continue
 		}
-		data, err := fs.ReadFile(asset.Path)
-		if err != nil {
-			continue
-		}
-		sum := sha256.Sum256(data)
-		artifacts = append(artifacts, domain.InstructionArtifact{
-			Tool:        tool,
-			Kind:        "project_instruction",
-			Path:        asset.Path,
-			Scope:       asset.Scope,
-			Content:     string(data),
-			ContentHash: hex.EncodeToString(sum[:]),
+		a := asset // capture loop variable
+		g.Go(func() error {
+			data, err := fs.ReadFile(a.Path)
+			if err != nil {
+				return nil
+			}
+			sum := sha256.Sum256(data)
+			art := domain.InstructionArtifact{
+				Tool:        tool,
+				Kind:        "project_instruction",
+				Path:        a.Path,
+				Scope:       a.Scope,
+				Content:     string(data),
+				ContentHash: hex.EncodeToString(sum[:]),
+			}
+			mu.Lock()
+			artifacts = append(artifacts, art)
+			mu.Unlock()
+			return nil
 		})
 	}
+	_ = g.Wait()
 	return artifacts
 }
 
@@ -111,57 +124,67 @@ func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe, policy domai
 		Warnings:   []string{},
 	}
 
+	var mu sync.Mutex
+	var g errgroup.Group
 	seenExcluded := map[string]struct{}{}
+
 	for _, asset := range assets {
 		if asset.Kind != "config" || !asset.Found {
 			continue
 		}
-		data, err := fs.ReadFile(asset.Path)
-		if err != nil {
-			continue
-		}
+		a := asset
+		g.Go(func() error {
+			data, err := fs.ReadFile(a.Path)
+			if err != nil {
+				return nil
+			}
 
-		var parsed map[string]any
-		switch strings.ToLower(filepath.Ext(asset.Path)) {
-		case ".json":
-			if err := json.Unmarshal(data, &parsed); err != nil {
-				continue
+			var parsed map[string]any
+			switch strings.ToLower(filepath.Ext(a.Path)) {
+			case ".json":
+				if err := json.Unmarshal(data, &parsed); err != nil {
+					return nil
+				}
+			case ".jsonc":
+				if err := json.Unmarshal(stripJSONCComments(data), &parsed); err != nil {
+					return nil
+				}
+			case ".toml":
+				if err := toml.Unmarshal(data, &parsed); err != nil {
+					return nil
+				}
+			default:
+				return nil
 			}
-		case ".jsonc":
-			if err := json.Unmarshal(stripJSONCComments(data), &parsed); err != nil {
-				continue
-			}
-		case ".toml":
-			if err := toml.Unmarshal(data, &parsed); err != nil {
-				continue
-			}
-		default:
-			continue
-		}
 
-		for key, value := range parsed {
-			if isSensitiveKey(key, policy) {
+			mu.Lock()
+			defer mu.Unlock()
+			for key, value := range parsed {
+				if isSensitiveKey(key, policy) {
+					if _, ok := seenExcluded[key]; !ok {
+						result.Snapshot.ExcludedKeys = append(result.Snapshot.ExcludedKeys, key)
+						result.Redactions = append(result.Redactions, "settings."+key)
+						seenExcluded[key] = struct{}{}
+					}
+					continue
+				}
+
+				if filtered, ok := simplifySettingValue(value, policy); ok {
+					result.Snapshot.Included[key] = filtered
+					continue
+				}
+
 				if _, ok := seenExcluded[key]; !ok {
 					result.Snapshot.ExcludedKeys = append(result.Snapshot.ExcludedKeys, key)
 					result.Redactions = append(result.Redactions, "settings."+key)
 					seenExcluded[key] = struct{}{}
 				}
-				continue
 			}
-
-			if filtered, ok := simplifySettingValue(value, policy); ok {
-				result.Snapshot.Included[key] = filtered
-				continue
-			}
-
-			if _, ok := seenExcluded[key]; !ok {
-				result.Snapshot.ExcludedKeys = append(result.Snapshot.ExcludedKeys, key)
-				result.Redactions = append(result.Redactions, "settings."+key)
-				seenExcluded[key] = struct{}{}
-			}
-		}
+			return nil
+		})
 	}
 
+	_ = g.Wait()
 	sort.Strings(result.Snapshot.ExcludedKeys)
 	return result
 }
