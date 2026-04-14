@@ -3,6 +3,8 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -489,6 +491,17 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "down", "j":
 			m.browserView.List.CursorDown()
 			return m, nil
+		case "enter":
+			if entry, ok := m.browserView.SelectedEntry(); ok {
+				editor := os.Getenv("EDITOR")
+				if editor == "" {
+					editor = "vim"
+				}
+				cmd := exec.Command(editor, entry.Key)
+				return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+					return actionFinishedMsg{action: actionNone, err: err}
+				})
+			}
 		}
 	}
 	return m, nil
@@ -893,10 +906,23 @@ func skillEntries(entries []catalog.SkillEntry) []browser.Entry {
 		if description == "" {
 			description = entry.Source
 		}
+		badge := entry.Tool
+		if badge == "" {
+			if strings.Contains(strings.ToLower(entry.RootPath), "codex") {
+				badge = "codex"
+			} else if strings.Contains(strings.ToLower(entry.RootPath), "claude") {
+				badge = "claude"
+			} else if strings.Contains(strings.ToLower(entry.RootPath), "gemini") {
+				badge = "gemini"
+			} else if strings.Contains(strings.ToLower(entry.RootPath), "opencode") {
+				badge = "opencode"
+			}
+		}
 		out = append(out, browser.Entry{
 			Key:         entry.EntryPath,
 			Title:       entry.Name,
 			Description: description,
+			Badge:       badge,
 			FilterValue: entry.Name,
 		})
 	}
@@ -910,10 +936,24 @@ func mcpEntries(entries []catalog.MCPEntry) []browser.Entry {
 		if description == "" {
 			description = entry.Source
 		}
+		
+		badge := ""
+		lowerName := strings.ToLower(entry.Name)
+		if strings.Contains(lowerName, "codex") {
+			badge = "codex"
+		} else if strings.Contains(lowerName, "claude") {
+			badge = "claude"
+		} else if strings.Contains(lowerName, "gemini") {
+			badge = "gemini"
+		} else if strings.Contains(lowerName, "opencode") {
+			badge = "opencode"
+		}
+
 		out = append(out, browser.Entry{
 			Key:         entry.Path,
 			Title:       entry.Name,
 			Description: description,
+			Badge:       badge,
 			FilterValue: entry.Name,
 		})
 	}
