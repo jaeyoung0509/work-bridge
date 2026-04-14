@@ -194,7 +194,7 @@ func inspectClaudeTranscriptCandidates(opts Options, root string, sessionID stri
 func listFilesRecursiveImporter(fs fsx.FS, root string) ([]string, error) {
 	info, err := fs.Stat(root)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	if !info.IsDir() {
 		return []string{root}, nil

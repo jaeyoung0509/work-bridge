@@ -20,6 +20,12 @@ type mcpConfigSummary struct {
 	Warnings    []string
 }
 
+type mcpServerCandidate struct {
+	path  []string
+	score int
+	node  map[string]any
+}
+
 func summarizeMCPConfig(path string, data []byte) mcpConfigSummary {
 	format := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
 	if format == "" {
@@ -75,17 +81,22 @@ func summarizeMCPConfig(path string, data []byte) mcpConfigSummary {
 }
 
 func extractMCPServers(value any) ([]domain.MCPServerConfig, []string) {
-	candidates := []map[string]any{}
+	candidates := []mcpServerCandidate{}
 	collectMCPServerCandidates(value, nil, &candidates)
 	if len(candidates) == 0 {
 		return nil, nil
 	}
-	best := candidates[0]
-	servers, warnings := parseMCPServerConfigs(best)
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score == candidates[j].score {
+			return strings.Join(candidates[i].path, ".") < strings.Join(candidates[j].path, ".")
+		}
+		return candidates[i].score > candidates[j].score
+	})
+	servers, warnings := parseMCPServerConfigs(candidates[0].node)
 	return servers, dedupeStrings(warnings)
 }
 
-func collectMCPServerCandidates(value any, path []string, out *[]map[string]any) {
+func collectMCPServerCandidates(value any, path []string, out *[]mcpServerCandidate) {
 	node, ok := value.(map[string]any)
 	if !ok {
 		return
@@ -96,8 +107,8 @@ func collectMCPServerCandidates(value any, path []string, out *[]map[string]any)
 		if !ok {
 			continue
 		}
-		if scoreMCPServerCandidate(nextPath) > 0 {
-			*out = append(*out, childMap)
+		if score := scoreMCPServerCandidate(nextPath); score > 0 {
+			*out = append(*out, mcpServerCandidate{path: nextPath, score: score, node: childMap})
 		}
 		collectMCPServerCandidates(childMap, nextPath, out)
 	}

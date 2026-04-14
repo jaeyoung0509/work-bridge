@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -249,7 +250,10 @@ func parseSkillEntry(fs fsx.FS, bundle skillBundle, root string, source string, 
 func listSkillBundles(fs fsx.FS, root string) ([]skillBundle, error) {
 	info, err := fs.Stat(root)
 	if err != nil {
-		return nil, nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	if !info.IsDir() {
 		return nil, nil

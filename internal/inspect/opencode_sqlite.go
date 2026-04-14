@@ -39,7 +39,9 @@ func inspectOpenCode(opts Options) ([]Session, []string, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open opencode db: %w", err)
 	}
-	defer db.Close()
+	defer func() {
+		_ = db.Close()
+	}()
 
 	sessionCols, err := tableColumns(db, "session")
 	if err != nil {
@@ -83,9 +85,12 @@ func inspectOpenCode(opts Options) ([]Session, []string, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to query opencode session table: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var sessions []Session
+	warnings := []string{}
 	for rows.Next() {
 		var id, title, updatedAt, projectId, workspaceId sql.NullString
 		if err := rows.Scan(&id, &title, &updatedAt, &projectId, &workspaceId); err != nil {
@@ -102,14 +107,18 @@ func inspectOpenCode(opts Options) ([]Session, []string, error) {
 		if workspaceId.Valid && workspaceId.String != "" {
 			var dir string
 			if err := db.QueryRow("SELECT directory FROM workspace WHERE id = ?", workspaceId.String).Scan(&dir); err != nil {
-				db.QueryRow("SELECT path FROM workspace WHERE id = ?", workspaceId.String).Scan(&dir) // fallback
+				if err2 := db.QueryRow("SELECT path FROM workspace WHERE id = ?", workspaceId.String).Scan(&dir); err2 != nil {
+					warnings = append(warnings, fmt.Sprintf("OpenCode workspace path lookup failed for session %s: %v; %v", id.String, err, err2))
+				}
 			}
 			s.ProjectRoot = dir
 		}
 		if s.ProjectRoot == "" && projectId.Valid && projectId.String != "" {
 			var dir string
 			if err := db.QueryRow("SELECT directory FROM project WHERE id = ?", projectId.String).Scan(&dir); err != nil {
-				db.QueryRow("SELECT path FROM project WHERE id = ?", projectId.String).Scan(&dir) // fallback
+				if err2 := db.QueryRow("SELECT path FROM project WHERE id = ?", projectId.String).Scan(&dir); err2 != nil {
+					warnings = append(warnings, fmt.Sprintf("OpenCode project path lookup failed for session %s: %v; %v", id.String, err, err2))
+				}
 			}
 			s.ProjectRoot = dir
 		}
@@ -117,16 +126,23 @@ func inspectOpenCode(opts Options) ([]Session, []string, error) {
 		// Attempt to count messages
 		var count int
 		if err := db.QueryRow("SELECT COUNT(*) FROM message WHERE session_id = ?", id.String).Scan(&count); err != nil {
-			db.QueryRow("SELECT COUNT(*) FROM message WHERE sessionId = ?", id.String).Scan(&count) // fallback
+			if err2 := db.QueryRow("SELECT COUNT(*) FROM message WHERE sessionId = ?", id.String).Scan(&count); err2 != nil {
+				warnings = append(warnings, fmt.Sprintf("OpenCode message count lookup failed for session %s: %v; %v", id.String, err, err2))
+			}
 		}
 		s.MessageCount = count
 
 		sessions = append(sessions, s)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("failed while iterating opencode sessions: %w", err)
+	}
 
 	sortSessions(sessions)
 
-	return sessions, []string{fmt.Sprintf("Read OpenCode sessions from %s", dbPath)}, nil
+	notes := []string{fmt.Sprintf("Read OpenCode sessions from %s", dbPath)}
+	notes = append(notes, warnings...)
+	return sessions, notes, nil
 }
 
 func tableColumns(db *sql.DB, table string) (map[string]bool, error) {

@@ -112,13 +112,13 @@ func (a *App) handleError(err error) int {
 	var exitErr *ExitError
 	if errors.As(err, &exitErr) {
 		if exitErr.Message != "" {
-			fmt.Fprintln(a.stderr, exitErr.Message)
+			_, _ = fmt.Fprintln(a.stderr, exitErr.Message)
 		}
 		return exitErr.Code
 	}
 
 	message := err.Error()
-	fmt.Fprintln(a.stderr, message)
+	_, _ = fmt.Fprintln(a.stderr, message)
 
 	if strings.Contains(message, "unknown command") {
 		return ExitUsage
@@ -192,7 +192,6 @@ func (a *App) newRootCommand() *cobra.Command {
 
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetVersionTemplate("work-bridge {{.Version}} (" + Commit + ", built " + BuildDate + ")\n")
-
 
 	root.PersistentFlags().String("config", "", "Path to a work-bridge config file.")
 	root.PersistentFlags().String("format", "text", "Output format. One of: text, json.")

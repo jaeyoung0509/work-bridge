@@ -132,7 +132,8 @@ func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe, policy domai
 	g.SetLimit(10)
 
 	type fileResult struct {
-		parsed map[string]any
+		parsed  map[string]any
+		warning string
 	}
 	results := make([]*fileResult, len(assets))
 
@@ -144,6 +145,7 @@ func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe, policy domai
 		g.Go(func() error {
 			data, err := fs.ReadFile(a.Path)
 			if err != nil {
+				results[idx] = &fileResult{warning: fmt.Sprintf("skipped settings import for %s: %v", a.Path, err)}
 				return nil
 			}
 
@@ -151,17 +153,21 @@ func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe, policy domai
 			switch strings.ToLower(filepath.Ext(a.Path)) {
 			case ".json":
 				if err := json.Unmarshal(data, &parsed); err != nil {
+					results[idx] = &fileResult{warning: fmt.Sprintf("skipped settings import for %s: %v", a.Path, err)}
 					return nil
 				}
 			case ".jsonc":
 				if err := json.Unmarshal(stripJSONCComments(data), &parsed); err != nil {
+					results[idx] = &fileResult{warning: fmt.Sprintf("skipped settings import for %s: %v", a.Path, err)}
 					return nil
 				}
 			case ".toml":
 				if err := toml.Unmarshal(data, &parsed); err != nil {
+					results[idx] = &fileResult{warning: fmt.Sprintf("skipped settings import for %s: %v", a.Path, err)}
 					return nil
 				}
 			default:
+				results[idx] = &fileResult{warning: fmt.Sprintf("skipped settings import for %s: unsupported format", a.Path)}
 				return nil
 			}
 			results[idx] = &fileResult{parsed: parsed}
@@ -173,7 +179,13 @@ func readSettingsSnapshot(fs fsx.FS, assets []detect.ArtifactProbe, policy domai
 
 	seenExcluded := map[string]struct{}{}
 	for _, res := range results {
-		if res == nil || res.parsed == nil {
+		if res == nil {
+			continue
+		}
+		if res.warning != "" {
+			result.Warnings = append(result.Warnings, res.warning)
+		}
+		if res.parsed == nil {
 			continue
 		}
 		for key, value := range res.parsed {

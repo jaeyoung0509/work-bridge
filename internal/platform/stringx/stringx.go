@@ -43,13 +43,17 @@ func FirstNonEmpty(values ...string) string {
 // Truncate shortens a string to the given limit, appending "..." if truncated.
 func Truncate(value string, limit int) string {
 	value = strings.TrimSpace(value)
-	if len(value) <= limit {
+	runes := []rune(value)
+	if len(runes) <= limit {
 		return value
 	}
-	if limit <= 3 {
-		return value[:limit]
+	if limit <= 0 {
+		return ""
 	}
-	return value[:limit-3] + "..."
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-3]) + "..."
 }
 
 // StringField extracts the first non-empty string value from a map by trying
@@ -119,7 +123,7 @@ func StripJSONCComments(data []byte) []byte {
 				continue
 			}
 		}
-		
+
 		var result strings.Builder
 		for i := 0; i < len(text); i++ {
 			ch := text[i]
@@ -141,7 +145,7 @@ func StripJSONCComments(data []byte) []byte {
 					next := text[i+1]
 					if next == '/' {
 						// single line comment: ignore rest of line
-						break 
+						break
 					} else if next == '*' {
 						// block comment start
 						inBlock = true
