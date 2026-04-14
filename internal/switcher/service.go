@@ -182,7 +182,7 @@ func (s *Service) LoadSkills(_ context.Context, projectRoot string) ([]catalog.S
 	if err != nil {
 		return nil, err
 	}
-	return catalog.ScanSkills(s.fs, projectRoot, s.homeDir)
+	return catalog.ScanAllSkills(s.fs, projectRoot, s.homeDir)
 }
 
 func (s *Service) LoadMCP(_ context.Context, projectRoot string) ([]catalog.MCPEntry, error) {

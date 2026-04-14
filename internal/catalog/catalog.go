@@ -133,6 +133,102 @@ func ScanSkills(fs fsx.FS, cwd, homeDir string) ([]SkillEntry, error) {
 	return dedupeSkills(entries), nil
 }
 
+// ScanAllSkills is like ScanSkills but returns every skill instance across all agents
+// without deduplication — useful for the TUI browser where users want to see
+// which tools have which skills installed.
+func ScanAllSkills(fs fsx.FS, cwd, homeDir string) ([]SkillEntry, error) {
+	repoRoot := nearestProjectRoot(fs, cwd)
+	projectDirs := skillDiscoveryWalk(cwd, repoRoot)
+	roots := []struct {
+		Path   string
+		Source string
+		Scope  string
+		Tool   string
+	}{}
+	for _, dir := range projectDirs {
+		roots = append(roots,
+			struct {
+				Path   string
+				Source string
+				Scope  string
+				Tool   string
+			}{Path: filepath.Join(dir, ".agents", "skills"), Source: "project .agents/skills", Scope: "project"},
+			struct {
+				Path   string
+				Source string
+				Scope  string
+				Tool   string
+			}{Path: filepath.Join(dir, ".gemini", "skills"), Source: "project .gemini/skills", Scope: "project", Tool: "gemini"},
+			struct {
+				Path   string
+				Source string
+				Scope  string
+				Tool   string
+			}{Path: filepath.Join(dir, ".claude", "skills"), Source: "project .claude/skills", Scope: "project", Tool: "claude"},
+			struct {
+				Path   string
+				Source string
+				Scope  string
+				Tool   string
+			}{Path: filepath.Join(dir, ".opencode", "skills"), Source: "project .opencode/skills", Scope: "project", Tool: "opencode"},
+		)
+	}
+	roots = append(roots,
+		struct {
+			Path   string
+			Source string
+			Scope  string
+			Tool   string
+		}{Path: filepath.Join(homeDir, ".agents", "skills"), Source: "user .agents/skills", Scope: "user"},
+		struct {
+			Path   string
+			Source string
+			Scope  string
+			Tool   string
+		}{Path: filepath.Join(homeDir, ".gemini", "skills"), Source: "user .gemini/skills", Scope: "user", Tool: "gemini"},
+		struct {
+			Path   string
+			Source string
+			Scope  string
+			Tool   string
+		}{Path: filepath.Join(homeDir, ".claude", "skills"), Source: "user .claude/skills", Scope: "user", Tool: "claude"},
+		struct {
+			Path   string
+			Source string
+			Scope  string
+			Tool   string
+		}{Path: filepath.Join(homeDir, ".config", "opencode", "skills"), Source: "user opencode skills", Scope: "user", Tool: "opencode"},
+		struct {
+			Path   string
+			Source string
+			Scope  string
+			Tool   string
+		}{Path: filepath.Join(string(filepath.Separator), "etc", "codex", "skills"), Source: "admin codex skills", Scope: "admin", Tool: "codex"},
+	)
+
+	entries := []SkillEntry{}
+	for _, root := range roots {
+		bundles, err := listSkillBundles(fs, root.Path)
+		if err != nil {
+			return nil, err
+		}
+		for _, bundle := range bundles {
+			entry := parseSkillEntry(fs, bundle, root.Path, root.Source, root.Scope, root.Tool)
+			if entry.Name == "" {
+				continue
+			}
+			entries = append(entries, entry)
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Tool == entries[j].Tool {
+			return entries[i].Name < entries[j].Name
+		}
+		return entries[i].Tool < entries[j].Tool
+	})
+	return entries, nil
+}
+
 func ScanMCP(fs fsx.FS, cwd, homeDir string, paths domain.ToolPaths) ([]MCPEntry, error) {
 	projectRoot := nearestProjectRoot(fs, cwd)
 	candidates := []MCPEntry{}

@@ -990,27 +990,40 @@ func skillEntries(entries []catalog.SkillEntry) []browser.Entry {
 	out := make([]browser.Entry, 0, len(entries))
 	for _, entry := range entries {
 		description := strings.TrimSpace(entry.Description)
-		if description == "" {
-			description = entry.Source
+
+		// Build a richer description line: scope + source info
+		scope := ""
+		if entry.Scope != "" {
+			scope = "[" + entry.Scope + "] "
 		}
+		if description != "" {
+			description = scope + description
+		} else {
+			description = scope + entry.Source
+		}
+
+		// Determine badge from catalog Tool, then fallback to path heuristics
 		badge := entry.Tool
 		if badge == "" {
-			if strings.Contains(strings.ToLower(entry.RootPath), "codex") {
+			lower := strings.ToLower(entry.RootPath)
+			switch {
+			case strings.Contains(lower, "/.codex/") || strings.Contains(lower, "/codex/"):
 				badge = "codex"
-			} else if strings.Contains(strings.ToLower(entry.RootPath), "claude") {
+			case strings.Contains(lower, "/.claude/"):
 				badge = "claude"
-			} else if strings.Contains(strings.ToLower(entry.RootPath), "gemini") {
+			case strings.Contains(lower, "/.gemini/"):
 				badge = "gemini"
-			} else if strings.Contains(strings.ToLower(entry.RootPath), "opencode") {
+			case strings.Contains(lower, "opencode"):
 				badge = "opencode"
 			}
 		}
+
 		out = append(out, browser.Entry{
 			Key:         entry.EntryPath,
 			Title:       entry.Name,
 			Description: description,
 			Badge:       badge,
-			FilterValue: entry.Name,
+			FilterValue: entry.Name + " " + badge + " " + entry.Scope,
 			Raw:         entry,
 		})
 	}
