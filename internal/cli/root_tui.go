@@ -24,6 +24,12 @@ func (a *App) runRoot(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+
+	detectReport, err := a.detectWorkspace(cmd.Context())
+	if err != nil {
+		return err
+	}
+
 	service := switcher.New(switcher.Options{
 		FS:        a.fs,
 		CWD:       cwd,
@@ -38,6 +44,7 @@ func (a *App) runRoot(cmd *cobra.Command, _ []string) error {
 		ProjectRoot:      cwd,
 		WorkspaceRoots:   append([]string{}, a.config.WorkspaceRoots...),
 		DefaultExportDir: a.config.Output.ExportDir,
+		DetectReport:     &detectReport,
 	}))
 	_, err = p.Run()
 	return err

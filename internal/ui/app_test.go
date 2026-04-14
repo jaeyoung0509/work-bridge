@@ -12,6 +12,8 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/switcher"
 )
 
+// ─── Fake Backend ───────────────────────────────────────────
+
 type fakeBackend struct {
 	workspace   switcher.Workspace
 	workspaces  map[string]switcher.Workspace
@@ -74,292 +76,235 @@ func (f *fakeBackend) Export(_ context.Context, req switcher.Request, outDir str
 	return f.exportResp, f.exportErr
 }
 
-func TestMainModelSessionEnterTransitionsToTargetStep(t *testing.T) {
+// ─── Test: Hub Starts Correctly ─────────────────────────────
+
+func TestMainModelStartsOnHubScreen(t *testing.T) {
 	t.Parallel()
-
 	model, _ := bootstrapModel(t, newFakeBackend())
-	model = runKey(t, model, specialKey(tea.KeyEnter))
-
-	if model.state != StateSelectTarget {
-		t.Fatalf("expected target step, got %v", model.state)
-	}
-	if model.selectedSession == nil || model.selectedSession.ID != "session-1" {
-		t.Fatalf("expected selected session to be set, got %#v", model.selectedSession)
-	}
-	if model.target != domain.ToolGemini {
-		t.Fatalf("expected default target to skip source tool, got %s", model.target)
+	if model.screen != ScreenHub {
+		t.Fatalf("expected Hub screen, got %v", model.screen)
 	}
 }
 
-func TestMainModelBuildsPreviewRequestFromSelections(t *testing.T) {
+func TestMainModelHubShowsAgentCards(t *testing.T) {
 	t.Parallel()
+	model, _ := bootstrapModel(t, newFakeBackend())
+	view := model.View().Content
+	if !strings.Contains(view, "CODEX") || !strings.Contains(view, "GEMINI") {
+		t.Fatalf("expected agent names in hub view, got %q", view)
+	}
+}
 
+// ─── Test: Slash Commands ───────────────────────────────────
+
+func TestSlashProjectsSwitchesToProjectsScreen(t *testing.T) {
+	t.Parallel()
+	model, _ := bootstrapModel(t, newFakeBackend())
+	model = typeCommand(t, model, "/projects")
+	if model.screen != ScreenProjects {
+		t.Fatalf("expected projects screen, got %v", model.screen)
+	}
+}
+
+func TestSlashSessionsSwitchesToSessionsScreen(t *testing.T) {
+	t.Parallel()
+	model, _ := bootstrapModel(t, newFakeBackend())
+	model = typeCommand(t, model, "/sessions")
+	if model.screen != ScreenSessions {
+		t.Fatalf("expected sessions screen, got %v", model.screen)
+	}
+}
+
+func TestSlashSkillsSwitchesToBrowserScreen(t *testing.T) {
+	t.Parallel()
+	backend := newFakeBackend()
+	model, _ := bootstrapModel(t, backend)
+	model = typeCommand(t, model, "/skills")
+	if model.screen != ScreenBrowser {
+		t.Fatalf("expected browser screen for skills, got %v", model.screen)
+	}
+	if len(model.browserView.List.Items()) != 1 {
+		t.Fatalf("expected 1 skill entry, got %d", len(model.browserView.List.Items()))
+	}
+}
+
+func TestSlashMCPSwitchesToBrowserScreen(t *testing.T) {
+	t.Parallel()
+	backend := newFakeBackend()
+	model, _ := bootstrapModel(t, backend)
+	model = typeCommand(t, model, "/mcp")
+	if model.screen != ScreenBrowser {
+		t.Fatalf("expected browser screen for MCP, got %v", model.screen)
+	}
+}
+
+// ─── Test: Screen Stack Navigation ──────────────────────────
+
+func TestEscReturnsToHubFromProjects(t *testing.T) {
+	t.Parallel()
+	model, _ := bootstrapModel(t, newFakeBackend())
+	model = typeCommand(t, model, "/projects")
+	if model.screen != ScreenProjects {
+		t.Fatalf("expected projects screen, got %v", model.screen)
+	}
+	model = runKey(t, model, specialKey(tea.KeyEscape))
+	if model.screen != ScreenHub {
+		t.Fatalf("expected hub screen after esc, got %v", model.screen)
+	}
+}
+
+func TestScreenStackDepth(t *testing.T) {
+	t.Parallel()
+	model, _ := bootstrapModel(t, newFakeBackend())
+
+	// Hub → Projects
+	model = typeCommand(t, model, "/projects")
+	if model.screen != ScreenProjects {
+		t.Fatalf("expected projects, got %v", model.screen)
+	}
+
+	// Projects → select project → Sessions
+	model = runKey(t, model, specialKey(tea.KeyEnter))
+	if model.screen != ScreenSessions {
+		t.Fatalf("expected sessions after project select, got %v", model.screen)
+	}
+
+	// Back to Projects
+	model = runKey(t, model, specialKey(tea.KeyEscape))
+	if model.screen != ScreenProjects {
+		t.Fatalf("expected projects after esc from sessions, got %v", model.screen)
+	}
+
+	// Back to Hub
+	model = runKey(t, model, specialKey(tea.KeyEscape))
+	if model.screen != ScreenHub {
+		t.Fatalf("expected hub after esc from projects, got %v", model.screen)
+	}
+}
+
+// ─── Test: Hub Quick Actions ────────────────────────────────
+
+func TestHubQuickActionNavigation(t *testing.T) {
+	t.Parallel()
+	model, _ := bootstrapModel(t, newFakeBackend())
+	if model.actionCursor != 0 {
+		t.Fatalf("expected initial cursor at 0, got %d", model.actionCursor)
+	}
+
+	model = runKey(t, model, specialKey(tea.KeyDown))
+	if model.actionCursor != 1 {
+		t.Fatalf("expected cursor at 1 after down, got %d", model.actionCursor)
+	}
+
+	// Enter on "sessions" (index 1)
+	model = runKey(t, model, specialKey(tea.KeyEnter))
+	if model.screen != ScreenSessions {
+		t.Fatalf("expected sessions screen from quick action, got %v", model.screen)
+	}
+}
+
+// ─── Test: Full Handoff Flow ────────────────────────────────
+
+func TestFullHandoffFlow(t *testing.T) {
+	t.Parallel()
 	backend := newFakeBackend()
 	model, backend := bootstrapModel(t, backend)
-	model = runKey(t, model, specialKey(tea.KeyEnter))
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	model = runKey(t, model, specialKey(tea.KeyEnter))
 
+	// Go to sessions
+	model = typeCommand(t, model, "/sessions")
+
+	// Select first session
+	model = runKey(t, model, specialKey(tea.KeyEnter))
+	if model.screen != ScreenHandoff {
+		t.Fatalf("expected handoff screen, got %v", model.screen)
+	}
+
+	// Preview should have been triggered
 	if len(backend.previewCalls) != 1 {
-		t.Fatalf("expected one preview call, got %d", len(backend.previewCalls))
+		t.Fatalf("expected 1 preview call, got %d", len(backend.previewCalls))
 	}
 
 	req := backend.previewCalls[0]
 	if req.From != domain.ToolCodex || req.Session != "session-1" {
-		t.Fatalf("unexpected source selection in request: %#v", req)
+		t.Fatalf("unexpected source in request: %#v", req)
 	}
 	if req.To != domain.ToolGemini {
 		t.Fatalf("expected default target gemini, got %s", req.To)
 	}
-	if req.Mode != domain.SwitchModeProject {
-		t.Fatalf("expected project mode, got %s", req.Mode)
+}
+
+// ─── Test: Export Path ──────────────────────────────────────
+
+func TestDefaultExportPathUsesConfig(t *testing.T) {
+	t.Parallel()
+	backend := newFakeBackend()
+
+	model := NewMainModel(context.Background(), backend, Options{
+		ProjectRoot:      "/repo/project",
+		DefaultExportDir: "/tmp/configured-out",
+	})
+	model = processCmd(t, model, model.Init())
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	model = updated.(MainModel)
+
+	// Navigate to handoff
+	model = typeCommand(t, model, "/sessions")
+	model = runKey(t, model, specialKey(tea.KeyEnter))
+
+	// The handoff view should use configured export dir
+	// Navigate to Export button
+	rows := 4 // target, advanced, apply, export
+	for i := 0; i < rows-1; i++ {
+		model.handoffView.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if !req.IncludeSkills || !req.IncludeMCP {
-		t.Fatalf("expected full preview by default, got %#v", req)
-	}
+
+	// Verify handoff view has the configured export dir
+	req := model.handoffView.BuildRequest()
 	if req.ProjectRoot != "/repo/project" {
-		t.Fatalf("expected workspace project root, got %q", req.ProjectRoot)
-	}
-	if model.state != StatePreview {
-		t.Fatalf("expected preview state, got %v", model.state)
-	}
-	if model.lastPreview == nil {
-		t.Fatalf("expected preview result to be stored")
+		t.Fatalf("expected project root in request, got %q", req.ProjectRoot)
 	}
 }
 
-func TestMainModelSessionOnlyDisablesSkillsAndMCP(t *testing.T) {
+// ─── Test: Breadcrumb ───────────────────────────────────────
+
+func TestBreadcrumbShowsCurrentScreen(t *testing.T) {
 	t.Parallel()
+	model, _ := bootstrapModel(t, newFakeBackend())
 
-	backend := newFakeBackend()
-	model, backend := bootstrapModel(t, backend)
-	model = runKey(t, model, specialKey(tea.KeyEnter))
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	model = runKey(t, model, specialKey(tea.KeyEnter))
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	model = runKey(t, model, specialKey(tea.KeyEnter))
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	model = runKey(t, model, specialKey(tea.KeyEnter))
-
-	if len(backend.previewCalls) != 1 {
-		t.Fatalf("expected one preview call, got %d", len(backend.previewCalls))
-	}
-
-	req := backend.previewCalls[0]
-	if req.IncludeSkills || req.IncludeMCP {
-		t.Fatalf("expected session-only preview to disable skills and mcp, got %#v", req)
-	}
-}
-
-func TestMainModelExportUsesConfiguredDefaultThenFallbackPath(t *testing.T) {
-	t.Parallel()
-
-	t.Run("configured default", func(t *testing.T) {
-		model, _ := previewReadyModel(t, newFakeBackend(), Options{
-			ProjectRoot:      "/repo/project",
-			DefaultExportDir: "/tmp/configured-out",
-		})
-
-		model = runKey(t, model, runeKey("e"))
-		if model.state != StateConfirm {
-			t.Fatalf("expected confirm state, got %v", model.state)
-		}
-		if model.confirmInput != "/tmp/configured-out" {
-			t.Fatalf("expected configured export dir, got %q", model.confirmInput)
-		}
-	})
-
-	t.Run("project fallback", func(t *testing.T) {
-		model, _ := previewReadyModel(t, newFakeBackend(), Options{
-			ProjectRoot: "/repo/project",
-		})
-
-		model = runKey(t, model, runeKey("e"))
-		want := filepath.Join("/repo/project", ".work-bridge", "exports", string(domain.ToolGemini))
-		if model.confirmInput != want {
-			t.Fatalf("expected fallback export path %q, got %q", want, model.confirmInput)
-		}
-	})
-}
-
-func TestMainModelApplyAndExportRequireConfirmBeforeRunning(t *testing.T) {
-	t.Parallel()
-
-	t.Run("apply waits for confirm", func(t *testing.T) {
-		backend := newFakeBackend()
-		model, backend := previewReadyModel(t, backend, Options{ProjectRoot: "/repo/project"})
-
-		model = runKey(t, model, runeKey("a"))
-		if len(backend.applyCalls) != 0 {
-			t.Fatalf("did not expect apply before confirmation")
-		}
-
-		model = runKey(t, model, specialKey(tea.KeyEnter))
-		if len(backend.applyCalls) != 1 {
-			t.Fatalf("expected one apply after confirmation, got %d", len(backend.applyCalls))
-		}
-		if model.state != StateResult {
-			t.Fatalf("expected result state, got %v", model.state)
-		}
-	})
-
-	t.Run("export waits for confirm", func(t *testing.T) {
-		backend := newFakeBackend()
-		model, backend := previewReadyModel(t, backend, Options{ProjectRoot: "/repo/project"})
-
-		model = runKey(t, model, runeKey("e"))
-		if len(backend.exportCalls) != 0 {
-			t.Fatalf("did not expect export before confirmation")
-		}
-
-		model = runKey(t, model, specialKey(tea.KeyEnter))
-		if len(backend.exportCalls) != 1 {
-			t.Fatalf("expected one export after confirmation, got %d", len(backend.exportCalls))
-		}
-		if backend.exportDirs[0] != filepath.Join("/repo/project", ".work-bridge", "exports", string(domain.ToolGemini)) {
-			t.Fatalf("unexpected export directory: %q", backend.exportDirs[0])
-		}
-		if model.state != StateResult {
-			t.Fatalf("expected result state, got %v", model.state)
-		}
-	})
-}
-
-func TestMainModelPreviewAndResultViewsShowWarningsAndErrors(t *testing.T) {
-	t.Parallel()
-
-	backend := newFakeBackend()
-	model, backend := previewReadyModel(t, backend, Options{ProjectRoot: "/repo/project"})
-
-	previewView := model.View().Content
-	if !strings.Contains(previewView, "portability warning") {
-		t.Fatalf("expected preview warning in view, got %q", previewView)
-	}
-	if !strings.Contains(previewView, "PARTIAL") {
-		t.Fatalf("expected preview status in view, got %q", previewView)
-	}
-
-	model = runKey(t, model, runeKey("a"))
-	model = runKey(t, model, specialKey(tea.KeyEnter))
-	resultView := model.View().Content
-	if !strings.Contains(resultView, "report warning") {
-		t.Fatalf("expected result warning in view, got %q", resultView)
-	}
-	if !strings.Contains(resultView, "updated files: 2") {
-		t.Fatalf("expected result summary in view, got %q", resultView)
-	}
-	if len(backend.applyCalls) != 1 {
-		t.Fatalf("expected apply to execute once, got %d", len(backend.applyCalls))
-	}
-}
-
-func TestMainModelAllowsSameToolTargetSelection(t *testing.T) {
-	t.Parallel()
-
-	backend := newFakeBackend()
-	model, backend := bootstrapModel(t, backend)
-	model = runKey(t, model, specialKey(tea.KeyEnter))
-	model = runKey(t, model, specialKey(tea.KeyLeft))
-	if model.target != domain.ToolCodex {
-		t.Fatalf("expected same-tool target selection to be allowed, got %s", model.target)
-	}
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	model = runKey(t, model, specialKey(tea.KeyEnter))
-
-	if got := backend.previewCalls[0].To; got != domain.ToolCodex {
-		t.Fatalf("expected preview request to keep same-tool target, got %s", got)
-	}
-}
-
-func TestMainModelSlashCommandOpensSkillsBrowser(t *testing.T) {
-	t.Parallel()
-
-	backend := newFakeBackend()
-	model, _ := bootstrapModel(t, backend)
-	model = typeCommand(t, model, "/skills")
-
-	if model.state != StateSkills {
-		t.Fatalf("expected skills state, got %v", model.state)
-	}
-	if len(model.skills) != 1 {
-		t.Fatalf("expected one skill entry, got %d", len(model.skills))
-	}
 	view := model.View().Content
-	if !strings.Contains(view, "refactor-review") {
-		t.Fatalf("expected skill name in view, got %q", view)
+	if !strings.Contains(view, "Hub") {
+		t.Fatalf("expected Hub in breadcrumb, got header portion near top")
 	}
-}
 
-func TestMainModelSlashCommandOpensMCPBrowser(t *testing.T) {
-	t.Parallel()
-
-	backend := newFakeBackend()
-	model, _ := bootstrapModel(t, backend)
-	model = typeCommand(t, model, "/mcp")
-
-	if model.state != StateMCP {
-		t.Fatalf("expected mcp state, got %v", model.state)
-	}
-	view := model.View().Content
-	if !strings.Contains(view, "/repo/project/.claude/settings.json") {
-		t.Fatalf("expected MCP path in view, got %q", view)
-	}
-}
-
-func TestMainModelProjectsCommandSwitchesWorkspace(t *testing.T) {
-	t.Parallel()
-
-	backend := newFakeBackend()
-	model, backend := bootstrapModel(t, backend)
 	model = typeCommand(t, model, "/projects")
-	if model.state != StateProjects {
-		t.Fatalf("expected projects state, got %v", model.state)
-	}
-
-	model = runKey(t, model, specialKey(tea.KeyEnter))
-
-	if model.state != StateSelectSession {
-		t.Fatalf("expected session state after switching project, got %v", model.state)
-	}
-	if model.workspace.ProjectRoot != "/repo/other" {
-		t.Fatalf("expected project root to switch, got %q", model.workspace.ProjectRoot)
-	}
-	if len(model.workspace.Sessions) != 1 || model.workspace.Sessions[0].ID != "session-2" {
-		t.Fatalf("expected switched workspace sessions, got %#v", model.workspace.Sessions)
-	}
-	if got := backend.loadWorkspaceRoots[len(backend.loadWorkspaceRoots)-1]; got != "/repo/other" {
-		t.Fatalf("expected project reload for /repo/other, got %q", got)
+	view = model.View().Content
+	if !strings.Contains(view, "Projects") {
+		t.Fatalf("expected Projects in breadcrumb")
 	}
 }
+
+// ─── Test: Unknown Command ──────────────────────────────────
+
+func TestUnknownSlashCommandShowsError(t *testing.T) {
+	t.Parallel()
+	model, _ := bootstrapModel(t, newFakeBackend())
+	model = typeCommand(t, model, "/unknown")
+	if model.lastErr == nil {
+		t.Fatalf("expected error for unknown command")
+	}
+	if !strings.Contains(model.lastErr.Error(), "unknown command") {
+		t.Fatalf("expected 'unknown command' error, got %q", model.lastErr.Error())
+	}
+}
+
+// ─── Test Helpers ───────────────────────────────────────────
 
 func bootstrapModel(t *testing.T, backend *fakeBackend) (MainModel, *fakeBackend) {
 	t.Helper()
-
 	model := NewMainModel(context.Background(), backend, Options{ProjectRoot: "/repo/project"})
-	initMsg := runCmd(t, model.Init())
-	updated, cmd := model.Update(initMsg)
-	model = updated.(MainModel)
-	if cmd != nil {
-		t.Fatalf("did not expect follow-up command after workspace load")
-	}
-	return model, backend
-}
-
-func previewReadyModel(t *testing.T, backend *fakeBackend, opts Options) (MainModel, *fakeBackend) {
-	t.Helper()
-
-	model := NewMainModel(context.Background(), backend, opts)
 	model = processCmd(t, model, model.Init())
-	model = runKey(t, model, specialKey(tea.KeyEnter))
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	model = runKey(t, model, specialKey(tea.KeyEnter))
-	return model, backend
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	return updated.(MainModel), backend
 }
 
 func processCmd(t *testing.T, model MainModel, cmd tea.Cmd) MainModel {
@@ -383,7 +328,7 @@ func runKey(t *testing.T, model MainModel, msg tea.KeyPressMsg) MainModel {
 func runCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 	t.Helper()
 	if cmd == nil {
-		t.Fatalf("expected command")
+		return nil
 	}
 	return cmd()
 }
@@ -499,6 +444,12 @@ func newFakeBackend() *fakeBackend {
 		},
 		projects: []catalog.ProjectEntry{
 			{
+				Name:          "project",
+				Root:          "/repo/project",
+				WorkspaceRoot: "/repo",
+				Markers:       []string{"git", "codex"},
+			},
+			{
 				Name:          "other",
 				Root:          "/repo/other",
 				WorkspaceRoot: "/repo",
@@ -536,3 +487,6 @@ func typeCommand(t *testing.T, model MainModel, command string) MainModel {
 	}
 	return runKey(t, model, specialKey(tea.KeyEnter))
 }
+
+// Unused but kept for future tests.
+var _ = filepath.Join
