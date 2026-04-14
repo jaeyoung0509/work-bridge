@@ -133,98 +133,67 @@ func ScanSkills(fs fsx.FS, cwd, homeDir string) ([]SkillEntry, error) {
 	return dedupeSkills(entries), nil
 }
 
-// ScanAllSkills is like ScanSkills but returns every skill instance across all agents
-// without deduplication — useful for the TUI browser where users want to see
-// which tools have which skills installed.
+// ScanAllSkills scans well-known agent-specific skill directories and returns
+// every skill instance without name-based deduplication, so the TUI browser
+// can show which LLM has which skills installed. Duplicates by file path
+// (e.g. the same bundle found twice due to path traversal) are removed.
 func ScanAllSkills(fs fsx.FS, cwd, homeDir string) ([]SkillEntry, error) {
 	repoRoot := nearestProjectRoot(fs, cwd)
-	projectDirs := skillDiscoveryWalk(cwd, repoRoot)
-	roots := []struct {
+
+	type root struct {
 		Path   string
 		Source string
 		Scope  string
 		Tool   string
-	}{}
-	for _, dir := range projectDirs {
-		roots = append(roots,
-			struct {
-				Path   string
-				Source string
-				Scope  string
-				Tool   string
-			}{Path: filepath.Join(dir, ".agents", "skills"), Source: "project .agents/skills", Scope: "project"},
-			struct {
-				Path   string
-				Source string
-				Scope  string
-				Tool   string
-			}{Path: filepath.Join(dir, ".gemini", "skills"), Source: "project .gemini/skills", Scope: "project", Tool: "gemini"},
-			struct {
-				Path   string
-				Source string
-				Scope  string
-				Tool   string
-			}{Path: filepath.Join(dir, ".claude", "skills"), Source: "project .claude/skills", Scope: "project", Tool: "claude"},
-			struct {
-				Path   string
-				Source string
-				Scope  string
-				Tool   string
-			}{Path: filepath.Join(dir, ".opencode", "skills"), Source: "project .opencode/skills", Scope: "project", Tool: "opencode"},
-		)
 	}
-	roots = append(roots,
-		struct {
-			Path   string
-			Source string
-			Scope  string
-			Tool   string
-		}{Path: filepath.Join(homeDir, ".agents", "skills"), Source: "user .agents/skills", Scope: "user"},
-		struct {
-			Path   string
-			Source string
-			Scope  string
-			Tool   string
-		}{Path: filepath.Join(homeDir, ".gemini", "skills"), Source: "user .gemini/skills", Scope: "user", Tool: "gemini"},
-		struct {
-			Path   string
-			Source string
-			Scope  string
-			Tool   string
-		}{Path: filepath.Join(homeDir, ".claude", "skills"), Source: "user .claude/skills", Scope: "user", Tool: "claude"},
-		struct {
-			Path   string
-			Source string
-			Scope  string
-			Tool   string
-		}{Path: filepath.Join(homeDir, ".config", "opencode", "skills"), Source: "user opencode skills", Scope: "user", Tool: "opencode"},
-		struct {
-			Path   string
-			Source string
-			Scope  string
-			Tool   string
-		}{Path: filepath.Join(string(filepath.Separator), "etc", "codex", "skills"), Source: "admin codex skills", Scope: "admin", Tool: "codex"},
-	)
 
+	roots := []root{
+		// Global (home-dir) roots — these are the authoritative per-agent locations
+		{filepath.Join(homeDir, ".config", "opencode", "skills"), "opencode global skills", "global", "opencode"},
+		{filepath.Join(homeDir, ".gemini", "skills"), "gemini global skills", "global", "gemini"},
+		{filepath.Join(homeDir, ".claude", "skills"), "claude global skills", "global", "claude"},
+		{filepath.Join(homeDir, ".codex", "skills"), "codex global skills", "global", "codex"},
+		{filepath.Join(homeDir, ".agents", "skills"), "agents global skills", "global", ""},
+		// Project-local roots (just the repo root, not every ancestor)
+		{filepath.Join(repoRoot, ".opencode", "skills"), "project opencode skills", "project", "opencode"},
+		{filepath.Join(repoRoot, ".gemini", "skills"), "project gemini skills", "project", "gemini"},
+		{filepath.Join(repoRoot, ".claude", "skills"), "project claude skills", "project", "claude"},
+		{filepath.Join(repoRoot, ".agents", "skills"), "project agents skills", "project", ""},
+	}
+
+	seen := map[string]struct{}{}
 	entries := []SkillEntry{}
-	for _, root := range roots {
-		bundles, err := listSkillBundles(fs, root.Path)
+	for _, r := range roots {
+		bundles, err := listSkillBundles(fs, r.Path)
 		if err != nil {
 			return nil, err
 		}
 		for _, bundle := range bundles {
-			entry := parseSkillEntry(fs, bundle, root.Path, root.Source, root.Scope, root.Tool)
+			// Dedupe by physical file path
+			if _, dup := seen[bundle.EntryPath]; dup {
+				continue
+			}
+			seen[bundle.EntryPath] = struct{}{}
+
+			entry := parseSkillEntry(fs, bundle, r.Path, r.Source, r.Scope, r.Tool)
 			if entry.Name == "" {
 				continue
 			}
 			entries = append(entries, entry)
 		}
 	}
+
+	// Sort: tool, then scope, then name
 	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].Tool == entries[j].Tool {
-			return entries[i].Name < entries[j].Name
+		ti, tj := entries[i].Tool, entries[j].Tool
+		if ti != tj {
+			return ti < tj
 		}
-		return entries[i].Tool < entries[j].Tool
+		si, sj := entries[i].Scope, entries[j].Scope
+		if si != sj {
+			return si < sj
+		}
+		return entries[i].Name < entries[j].Name
 	})
 	return entries, nil
 }
