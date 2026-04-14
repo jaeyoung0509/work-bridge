@@ -10,6 +10,26 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/switcher"
 )
 
+func (a *App) newExportCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "export",
+		Short: "Export a target-ready handoff without applying to the project.",
+		Args:  cobra.NoArgs,
+		RunE:  a.runExport,
+	}
+	cmd.Flags().String("from", "", "Source tool: codex, gemini, claude, opencode.")
+	cmd.Flags().String("session", "latest", "Source session identifier or latest.")
+	cmd.Flags().String("to", "", "Target tool: codex, gemini, claude, opencode.")
+	cmd.Flags().String("project", "", "Project root to scope the export.")
+	cmd.Flags().String("mode", "project", "Export mode: project, native.")
+	cmd.Flags().String("out", "", "Output directory for exported target-ready files.")
+	cmd.Flags().Bool("dry-run", false, "Preview export output without writing files.")
+	cmd.Flags().Bool("no-skills", false, "Skip skills when building the export payload.")
+	cmd.Flags().Bool("no-mcp", false, "Skip MCP when building the export payload.")
+	cmd.Flags().Bool("session-only", false, "Export session context only.")
+	return cmd
+}
+
 func (a *App) runExport(cmd *cobra.Command, _ []string) error {
 	fromValue, err := cmd.Flags().GetString("from")
 	if err != nil {
