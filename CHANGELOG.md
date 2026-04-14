@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.6] - 2026-04-10
+## [0.1.7] - 2026-04-14
 
 ### Added
 
@@ -79,7 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Skills and MCP server collection and cross-agent re-emission
 - `.work-bridge/<tool>/` managed project root pattern
 
-[Unreleased]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.6...HEAD
-[0.1.6]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.5...v0.1.6
+[Unreleased]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.6...v0.1.7
 [0.1.5]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/jaeyoung0509/work-bridge/releases/tag/v0.1.4

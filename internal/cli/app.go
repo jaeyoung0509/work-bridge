@@ -20,7 +20,7 @@ import (
 
 // Version, Commit, and BuildDate are overridden at build time via -ldflags:
 //
-//	go build -ldflags "-X 'github.com/jaeyoung0509/work-bridge/internal/cli.Version=v0.1.5'"
+//	go build -ldflags "-X 'github.com/jaeyoung0509/work-bridge/internal/cli.Version=v0.1.7'"
 //
 // When built without ldflags (e.g. go run, go test) these default to "dev" / "unknown".
 var (
@@ -112,13 +112,13 @@ func (a *App) handleError(err error) int {
 	var exitErr *ExitError
 	if errors.As(err, &exitErr) {
 		if exitErr.Message != "" {
-			fmt.Fprintln(a.stderr, exitErr.Message)
+			_, _ = fmt.Fprintln(a.stderr, exitErr.Message)
 		}
 		return exitErr.Code
 	}
 
 	message := err.Error()
-	fmt.Fprintln(a.stderr, message)
+	_, _ = fmt.Fprintln(a.stderr, message)
 
 	if strings.Contains(message, "unknown command") {
 		return ExitUsage
@@ -193,7 +193,6 @@ func (a *App) newRootCommand() *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetVersionTemplate("work-bridge {{.Version}} (" + Commit + ", built " + BuildDate + ")\n")
 
-
 	root.PersistentFlags().String("config", "", "Path to a work-bridge config file.")
 	root.PersistentFlags().String("format", "text", "Output format. One of: text, json.")
 	root.PersistentFlags().Bool("verbose", false, "Enable verbose logging.")
@@ -211,4 +210,19 @@ func (a *App) newRootCommand() *cobra.Command {
 		a.newVersionCommand(),
 	)
 	return root
+}
+
+func (a *App) newVersionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the build version.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintf(cmd.OutOrStdout(),
+				"work-bridge %s (commit: %s, built: %s)\n",
+				Version, Commit, BuildDate,
+			)
+			return err
+		},
+	}
 }

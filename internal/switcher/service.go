@@ -120,7 +120,7 @@ func (s *Service) LoadWorkspace(ctx context.Context, projectRoot string) (Worksp
 
 	items := make([]WorkspaceItem, 0, 32)
 	var mu errCollector
-	group, ctx := errgroup.WithContext(ctx)
+	group, _ := errgroup.WithContext(ctx)
 	for _, tool := range []domain.Tool{domain.ToolCodex, domain.ToolGemini, domain.ToolClaude, domain.ToolOpenCode} {
 		tool := tool
 		group.Go(func() error {
@@ -310,9 +310,6 @@ func (s *Service) resolveRequest(ctx context.Context, req Request) (resolvedRequ
 	req.ProjectRoot = projectRoot
 	if req.Session == "" {
 		req.Session = "latest"
-	}
-	if !req.IncludeSkills && !req.IncludeMCP {
-		// session-only preview/apply is valid
 	}
 
 	sessionID, err := s.resolveSessionID(ctx, req.From, req.Session, projectRoot)

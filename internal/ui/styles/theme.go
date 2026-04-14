@@ -42,11 +42,11 @@ var (
 	SuccessText = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	ErrorText   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
 
-	ErrorBox = Panel.Copy().
+	ErrorBox = Panel.
 			BorderForeground(lipgloss.Color("203")).
 			Foreground(lipgloss.Color("203"))
 
-	HelpBox = Panel.Copy().
+	HelpBox = Panel.
 		BorderForeground(lipgloss.Color("81"))
 
 	InputBox = lipgloss.NewStyle().

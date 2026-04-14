@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -221,8 +222,11 @@ func inspectGemini(opts Options) ([]Session, []string, error) {
 	}
 
 	projectData := projectsFile{Projects: map[string]string{}}
+	projectsParseWarning := ""
 	if data, err := opts.FS.ReadFile(projectsPath); err == nil {
-		_ = json.Unmarshal(data, &projectData)
+		if err := json.Unmarshal(data, &projectData); err != nil {
+			projectsParseWarning = fmt.Sprintf("Gemini projects.json could not be parsed: %v", err)
+		}
 	}
 
 	aliasToProject := make(map[string]string, len(projectData.Projects))
@@ -294,6 +298,9 @@ func inspectGemini(opts Options) ([]Session, []string, error) {
 	}
 	if unreadableSessions > 0 {
 		notes = append(notes, fmt.Sprintf("%d Gemini session files were skipped because they could not be read.", unreadableSessions))
+	}
+	if projectsParseWarning != "" {
+		notes = append(notes, projectsParseWarning)
 	}
 
 	return sessions, notes, nil
@@ -504,6 +511,9 @@ func epochMillisToRFC3339(value int64) string {
 func codexSessionPathMap(fs fsx.FS, root string) (map[string]string, error) {
 	files, err := listFilesRecursive(fs, root)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]string{}, nil
+		}
 		return nil, err
 	}
 
@@ -531,7 +541,7 @@ func codexSessionPathMap(fs fsx.FS, root string) (map[string]string, error) {
 func listFilesRecursive(fs fsx.FS, root string) ([]string, error) {
 	info, err := fs.Stat(root)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	if !info.IsDir() {
 		return []string{root}, nil

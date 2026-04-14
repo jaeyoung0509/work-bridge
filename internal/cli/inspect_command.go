@@ -9,6 +9,17 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/inspect"
 )
 
+func (a *App) newInspectCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "inspect <tool>",
+		Short: "Inspect a tool's importable sessions and assets.",
+		Args:  cobra.ExactArgs(1),
+		RunE:  a.runInspect,
+	}
+	cmd.Flags().Int("limit", 20, "Maximum number of sessions to show.")
+	return cmd
+}
+
 func (a *App) runInspect(cmd *cobra.Command, args []string) error {
 	switch args[0] {
 	case "codex", "gemini", "claude", "opencode":

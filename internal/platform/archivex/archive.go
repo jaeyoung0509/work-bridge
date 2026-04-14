@@ -24,15 +24,23 @@ type Reader interface {
 
 type ZIPArchive struct{}
 
-func (ZIPArchive) WritePackage(dst string, files []File) error {
+func (ZIPArchive) WritePackage(dst string, files []File) (err error) {
 	f, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
 	zw := zip.NewWriter(f)
-	defer zw.Close()
+	defer func() {
+		if closeErr := zw.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
 	ordered := append([]File(nil), files...)
 	sort.Slice(ordered, func(i, j int) bool {
@@ -78,11 +86,11 @@ func (ZIPArchive) ReadPackage(src string) ([]File, error) {
 		}
 
 		body, readErr := io.ReadAll(rc)
-		closeErr := rc.Close()
 		if readErr != nil {
+			_ = rc.Close()
 			return nil, readErr
 		}
-		if closeErr != nil {
+		if closeErr := rc.Close(); closeErr != nil {
 			return nil, closeErr
 		}
 

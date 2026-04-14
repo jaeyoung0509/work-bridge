@@ -7,7 +7,6 @@ const (
 	ExitSessionNotFound = 3
 	ExitParseFailure    = 4
 	ExitExportFailure   = 5
-	ExitNotImplemented  = 10
 )
 
 type ExitError struct {

@@ -264,7 +264,9 @@ func (a *projectAdapter) writeSessionArtifacts(bundle domain.SessionBundle, plan
 	if err != nil {
 		return domain.ExportManifest{}, nil, nil, err
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		_ = os.RemoveAll(tempDir)
+	}()
 
 	manifest, err := exporter.Export(exporter.Options{
 		FS:     a.fs,
@@ -392,7 +394,10 @@ func (a *projectAdapter) writeMCP(payload domain.SwitchPayload, plan domain.Swit
 
 func (a *projectAdapter) writeInstructionFile(payload domain.SwitchPayload, plan domain.SwitchPlan) ([]string, []string, error) {
 	targetPath := getLocator(a.target).InstructionPath(plan.DestinationRoot)
-	existing, _ := a.fs.ReadFile(targetPath)
+	existing, err := a.fs.ReadFile(targetPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, nil, err
+	}
 	next := upsertManagedBlock(string(existing), a.renderManagedBlock(payload, plan))
 	changed, backup, err := a.writeFile(targetPath, next)
 	if err != nil {
@@ -465,7 +470,11 @@ func (a *projectAdapter) renderTargetConfig(path string, payload domain.MCPPaylo
 
 func (a *projectAdapter) renderTargetConfigJSON(path string, payload domain.MCPPayload) (string, string, error) {
 	config := map[string]any{}
-	if existing, err := a.fs.ReadFile(path); err == nil && len(existing) > 0 {
+	if existing, err := a.fs.ReadFile(path); err != nil {
+		if !os.IsNotExist(err) {
+			return "", "", err
+		}
+	} else if len(existing) > 0 {
 		if err := jsonx.UnmarshalRelaxed(existing, &config); err != nil {
 			return "", fmt.Sprintf("skipped native MCP config patch for %s: %v", filepath.Base(path), err), err
 		}
@@ -483,7 +492,11 @@ func (a *projectAdapter) renderTargetConfigJSON(path string, payload domain.MCPP
 // Codex reads [mcp.servers.<name>] tables from the project-local .codex/config.toml.
 func (a *projectAdapter) renderTargetConfigTOML(path string, payload domain.MCPPayload) (string, string, error) {
 	var config map[string]any
-	if existing, err := a.fs.ReadFile(path); err == nil && len(existing) > 0 {
+	if existing, err := a.fs.ReadFile(path); err != nil {
+		if !os.IsNotExist(err) {
+			return "", "", err
+		}
+	} else if len(existing) > 0 {
 		if err := gotoml.Unmarshal(existing, &config); err != nil {
 			return "", fmt.Sprintf("skipped Codex TOML MCP patch for %s: %v", filepath.Base(path), err), err
 		}
@@ -522,7 +535,11 @@ func (a *projectAdapter) renderMergedTargetConfig(path string, servers map[strin
 
 func (a *projectAdapter) renderMergedTargetConfigJSON(path string, incoming map[string]domain.MCPServerConfig) (string, []string, error) {
 	config := map[string]any{}
-	if existing, err := a.fs.ReadFile(path); err == nil && len(existing) > 0 {
+	if existing, err := a.fs.ReadFile(path); err != nil {
+		if !os.IsNotExist(err) {
+			return "", nil, err
+		}
+	} else if len(existing) > 0 {
 		if err := jsonx.UnmarshalRelaxed(existing, &config); err != nil {
 			return "", nil, err
 		}
@@ -546,7 +563,11 @@ func (a *projectAdapter) renderMergedTargetConfigJSON(path string, incoming map[
 
 func (a *projectAdapter) renderMergedTargetConfigTOML(path string, incoming map[string]domain.MCPServerConfig) (string, []string, error) {
 	var config map[string]any
-	if existing, err := a.fs.ReadFile(path); err == nil && len(existing) > 0 {
+	if existing, err := a.fs.ReadFile(path); err != nil {
+		if !os.IsNotExist(err) {
+			return "", nil, err
+		}
+	} else if len(existing) > 0 {
 		if err := gotoml.Unmarshal(existing, &config); err != nil {
 			return "", nil, err
 		}
@@ -848,6 +869,9 @@ func (a *projectAdapter) writeFile(path string, content string) (bool, string, e
 		return false, "", err
 	}
 	current, err := a.fs.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return false, "", err
+	}
 	if err == nil && string(current) == content {
 		return false, "", nil
 	}
