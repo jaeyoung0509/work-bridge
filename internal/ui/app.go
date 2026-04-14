@@ -34,14 +34,14 @@ type Options struct {
 type AppState int
 
 const (
-	StateSelectSession AppState = iota
-	StateSelectTarget
-	StatePreview
-	StateConfirm
-	StateResult
-	StateProjects
-	StateSkills
-	StateMCP
+	StateSelectSession AppState = iota // Step 1: Select a source session
+	StateSelectTarget                  // Step 2: Select the target tool and advanced options
+	StatePreview                       // Step 3: Review the planned handoff operations
+	StateConfirm                       // Step 4: Confirm action or input export path
+	StateResult                        // Step 5: Display the action summary report
+	StateProjects                      // Browser: Select an active project from the workspace
+	StateSkills                        // Browser: View available skills
+	StateMCP                           // Browser: View MCP server configurations
 )
 
 type actionKind int
@@ -76,14 +76,19 @@ var supportedTools = []domain.Tool{
 	domain.ToolOpenCode,
 }
 
+// MainModel serves as the root router for the Bubble Tea application.
+// It manages the overall state machine, data fetching (Backend interactions), and delegates rendering to nested views.
 type MainModel struct {
 	ctx             context.Context
 	backend         Backend
 	options         Options
-	state           AppState
-	sessionView     session.Model
+	state           AppState // Tracks the current step in the migration wizard or browser view.
+
+	sessionView     session.Model // Renders the list of sessions available for handoff.
 	workspace       switcher.Workspace
 	selectedSession *switcher.WorkspaceItem
+
+	// Wizard selections
 	target          domain.Tool
 	mode            domain.SwitchMode
 	includeSkills   bool
@@ -91,22 +96,27 @@ type MainModel struct {
 	sessionOnly     bool
 	showAdvanced    bool
 	optionCursor    int
-	lastPreview     *switcher.Result
-	lastResult      *switcher.Result
-	lastErr         error
-	running         actionKind
+
+	lastPreview     *switcher.Result // Holds the dry-run handoff plan.
+	lastResult      *switcher.Result // Holds the final result report after an apply/export.
+	lastErr         error            // Tracks any errors that occurred in the latest action.
+	running         actionKind       // Tracks long-running background tasks (e.g., loading previews).
+
 	confirmAction   actionKind
 	confirmInput    string
 	confirmCursor   int
+
 	showHelp        bool
-	commandActive   bool
+	commandActive   bool   // True when the user is typing a slash command (e.g., /projects).
 	commandInput    string
 	commandCursor   int
-	browserView     browser.Model
-	browserReturn   AppState
+
+	browserView     browser.Model // Reusable list view for exploring Projects, Skills, and MCP configs.
+	browserReturn   AppState      // State to return to when exiting the browser view.
 	projects        []catalog.ProjectEntry
 	skills          []catalog.SkillEntry
 	mcpEntries      []catalog.MCPEntry
+
 	quitting        bool
 	width           int
 	height          int

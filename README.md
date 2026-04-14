@@ -217,28 +217,25 @@ Run `work-bridge` without arguments to open the interactive migration console:
 work-bridge
 ```
 
-The TUI is now focused on one workflow:
+The TUI has been completely redesigned into a component-based wizard flow (built with Bubble Tea and Lipgloss), guiding you step-by-step:
 
-- choose a source session from the current project
-- choose a target tool
-- preview the handoff
-- apply or export
+1. **Session Selection**: Choose a source session from the current workspace.
+2. **Target & Options**: Select your target tool and optionally open "Advanced" to toggle native mode, session-only scope, skills, or MCP config.
+3. **Preview**: Review the planned handoff operations, affected files, and any warnings.
+4. **Confirm & Result**: Apply the changes into the project or export them to a directory, then see a detailed summary report.
 
-Key actions:
+**Slash Commands & Browser:**
+You can type slash commands at any time to inspect workspace resources in a dedicated browser view:
+- `/projects`: Scan and switch active projects (configurable via `--workspace-roots`)
+- `/skills`: Browse available project and global skills
+- `/mcp`: Browse MCP server configurations
 
-- `Enter` preview
-- `a` apply into the project
-- `e` export into `.work-bridge/exports/<target>/`
-- `r` refresh
-- `?` help
-- `q` quit
-
-User-facing statuses are simplified:
-
-- `READY`
-- `APPLIED`
-- `PARTIAL`
-- `ERROR`
+**Global Key Actions:**
+- `Enter` select / confirm
+- `r` refresh current view
+- `?` toggle help
+- `q` or `Ctrl+C` quit
+- `esc` go back
 
 ---
 
@@ -250,6 +247,12 @@ work-bridge inspect <tool> [--limit N]
 work-bridge switch --from <tool> --session <id|latest> --to <tool> --project <path> [--dry-run] [--no-skills] [--no-mcp] [--session-only]
 work-bridge export --from <tool> --session <id|latest> --to <tool> --project <path> --out <dir> [--dry-run] [--no-skills] [--no-mcp] [--session-only]
 work-bridge version
+
+Global Flags:
+  --config <path>             Path to a work-bridge config file.
+  --format <text|json>        Output format (default "text").
+  --verbose                   Enable verbose logging.
+  --workspace-roots <paths>   Directories to scan when discovering projects.
 ```
 
 Supported tools:
