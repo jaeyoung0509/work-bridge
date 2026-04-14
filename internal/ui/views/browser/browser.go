@@ -18,6 +18,7 @@ type Entry struct {
 	Badge       string
 	FilterValue string
 	Details     []string
+	Raw         any
 }
 
 type SelectedMsg struct {

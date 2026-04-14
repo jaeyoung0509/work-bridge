@@ -76,6 +76,14 @@ func (f *fakeBackend) Export(_ context.Context, req switcher.Request, outDir str
 	return f.exportResp, f.exportErr
 }
 
+func (f *fakeBackend) MigrateMCP(_ context.Context, _ catalog.MCPEntry, _ domain.Tool, _ string) error {
+	return nil
+}
+
+func (f *fakeBackend) MigrateSkill(_ context.Context, _ catalog.SkillEntry, _ domain.Tool, _ string) error {
+	return nil
+}
+
 // ─── Test: Hub Starts Correctly ─────────────────────────────
 
 func TestMainModelStartsOnHubScreen(t *testing.T) {

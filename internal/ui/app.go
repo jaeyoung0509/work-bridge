@@ -11,8 +11,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/jaeyoung0509/work-bridge/internal/catalog"
 	"github.com/jaeyoung0509/work-bridge/internal/detect"
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
 	"github.com/jaeyoung0509/work-bridge/internal/switcher"
 	"github.com/jaeyoung0509/work-bridge/internal/ui/styles"
+	"github.com/jaeyoung0509/work-bridge/internal/ui/views/actionmenu"
 	"github.com/jaeyoung0509/work-bridge/internal/ui/views/browser"
 	"github.com/jaeyoung0509/work-bridge/internal/ui/views/cmdpalette"
 	"github.com/jaeyoung0509/work-bridge/internal/ui/views/handoff"
@@ -26,6 +28,8 @@ type Backend interface {
 	LoadProjects(ctx context.Context, roots []string) ([]catalog.ProjectEntry, error)
 	LoadSkills(ctx context.Context, projectRoot string) ([]catalog.SkillEntry, error)
 	LoadMCP(ctx context.Context, projectRoot string) ([]catalog.MCPEntry, error)
+	MigrateMCP(ctx context.Context, entry catalog.MCPEntry, target domain.Tool, projectRoot string) error
+	MigrateSkill(ctx context.Context, entry catalog.SkillEntry, target domain.Tool, projectRoot string) error
 	Preview(ctx context.Context, req switcher.Request) (switcher.Result, error)
 	Apply(ctx context.Context, req switcher.Request) (switcher.Result, error)
 	Export(ctx context.Context, req switcher.Request, outDir string) (switcher.Result, error)
@@ -50,6 +54,7 @@ const (
 	ScreenSessions
 	ScreenHandoff
 	ScreenBrowser
+	ScreenActionMenu
 )
 
 // ─── Action Enum ────────────────────────────────────────────
@@ -65,6 +70,7 @@ const (
 	actionExport
 	actionLoadSkills
 	actionLoadMCP
+	actionMigrate
 )
 
 // ─── Hub Quick Actions ──────────────────────────────────────
@@ -134,6 +140,7 @@ type MainModel struct {
 	handoffView     handoff.Model
 	browserView     browser.Model
 	browserTitle    string
+	actionMenuView  actionmenu.Model
 
 	running         actionKind
 	lastErr         error
@@ -216,6 +223,25 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case handoff.ExportRequestMsg:
 		m.running = actionExport
 		return m, m.exportCmd(msg.Request, msg.ExportPath)
+
+	// ── Action menu messages ──
+	case actionmenu.BackMsg:
+		return m.popScreen()
+	case actionmenu.ActionSelectedMsg:
+		if msg.ActionType == actionmenu.ActionEdit {
+			editor := os.Getenv("EDITOR")
+			if editor == "" {
+				editor = "vim"
+			}
+			cmd := exec.Command(editor, msg.Entry.Key)
+			return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+				return actionFinishedMsg{action: actionNone, err: err}
+			})
+		} else if msg.ActionType == actionmenu.ActionMigrate {
+			m.running = actionMigrate
+			m.actionMenuView.SetStatus("Migrating...", false)
+			return m, m.migrateCmd(msg)
+		}
 	}
 
 	// Per-screen update
@@ -230,6 +256,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateHandoff(msg)
 	case ScreenBrowser:
 		return m.updateBrowser(msg)
+	case ScreenActionMenu:
+		return m.updateActionMenu(msg)
 	}
 
 	return m, nil
@@ -493,14 +521,40 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			if entry, ok := m.browserView.SelectedEntry(); ok {
+				m.actionMenuView = actionmenu.New(entry)
+				m.actionMenuView.SetSize(m.width, m.height)
+				m.pushScreen(ScreenActionMenu)
+				return m, nil
+			}
+		}
+	}
+	return m, nil
+}
+
+// ─── Action Menu Screen ──────────────────────────────────────
+
+func (m MainModel) updateActionMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.actionMenuView.Update(msg)
+	m.actionMenuView = updated
+	if cmd != nil {
+		resultMsg := cmd()
+		switch resultMsg := resultMsg.(type) {
+		case actionmenu.BackMsg:
+			return m.popScreen()
+		case actionmenu.ActionSelectedMsg:
+			if resultMsg.ActionType == actionmenu.ActionEdit {
 				editor := os.Getenv("EDITOR")
 				if editor == "" {
 					editor = "vim"
 				}
-				cmd := exec.Command(editor, entry.Key)
-				return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+				execCmd := exec.Command(editor, resultMsg.Entry.Key)
+				return m, tea.ExecProcess(execCmd, func(err error) tea.Msg {
 					return actionFinishedMsg{action: actionNone, err: err}
 				})
+			} else if resultMsg.ActionType == actionmenu.ActionMigrate {
+				m.running = actionMigrate
+				m.actionMenuView.SetStatus("Migrating...", false)
+				return m, m.migrateCmd(resultMsg)
 			}
 		}
 	}
@@ -555,11 +609,20 @@ func (m MainModel) handlePreviewLoaded(msg previewLoadedMsg) (tea.Model, tea.Cmd
 func (m MainModel) handleActionFinished(msg actionFinishedMsg) (tea.Model, tea.Cmd) {
 	m.running = actionNone
 	m.lastErr = msg.err
-	if msg.err == nil {
-		r := msg.result
-		m.handoffView.SetResult(&r, nil)
-	} else {
-		m.handoffView.SetResult(nil, msg.err)
+	switch msg.action {
+	case actionMigrate:
+		if msg.err != nil {
+			m.actionMenuView.SetStatus("Error: "+msg.err.Error(), true)
+		} else {
+			m.actionMenuView.SetStatus("✓ Migration complete!", false)
+		}
+	default:
+		if msg.err == nil {
+			r := msg.result
+			m.handoffView.SetResult(&r, nil)
+		} else {
+			m.handoffView.SetResult(nil, msg.err)
+		}
 	}
 	return m, nil
 }
@@ -635,6 +698,21 @@ func (m MainModel) exportCmd(req switcher.Request, outDir string) tea.Cmd {
 	}
 }
 
+func (m MainModel) migrateCmd(msg actionmenu.ActionSelectedMsg) tea.Cmd {
+	return func() tea.Msg {
+		var err error
+		switch raw := msg.Entry.Raw.(type) {
+		case catalog.MCPEntry:
+			err = m.backend.MigrateMCP(m.ctx, raw, msg.Target, m.activeProjectRoot)
+		case catalog.SkillEntry:
+			err = m.backend.MigrateSkill(m.ctx, raw, msg.Target, m.activeProjectRoot)
+		default:
+			err = fmt.Errorf("unknown entry type for migration")
+		}
+		return actionFinishedMsg{action: actionMigrate, err: err}
+	}
+}
+
 // ─── View ───────────────────────────────────────────────────
 
 func (m MainModel) View() tea.View {
@@ -657,6 +735,8 @@ func (m MainModel) View() tea.View {
 		mainContent = m.handoffView.View().Content
 	case ScreenBrowser:
 		mainContent = m.renderBrowserScreen()
+	case ScreenActionMenu:
+		mainContent = m.actionMenuView.View().Content
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, mainContent, footer)
@@ -821,6 +901,9 @@ func (m MainModel) renderBreadcrumb() string {
 		}
 	case ScreenBrowser:
 		parts = append(parts, styles.BreadcrumbActive.Render(m.browserTitle))
+	case ScreenActionMenu:
+		parts = append(parts, styles.BreadcrumbItem.Render(m.browserTitle))
+		parts = append(parts, styles.BreadcrumbActive.Render(m.actionMenuView.EntryTitle()))
 	}
 
 	return strings.Join(parts, sep)
@@ -840,7 +923,9 @@ func (m MainModel) renderFooter() string {
 	case ScreenHandoff:
 		help = "↑↓: options • ←→: adjust • enter: confirm • esc: back"
 	case ScreenBrowser:
-		help = "↑↓: navigate • esc: back • /: commands"
+		help = "↑↓: navigate • enter: open • esc: back"
+	case ScreenActionMenu:
+		help = "↑↓: navigate • enter: execute • esc: back"
 	}
 
 	footer := styles.Muted.Render(help)
@@ -868,6 +953,8 @@ func actionLabel(action actionKind) string {
 		return "loading skills"
 	case actionLoadMCP:
 		return "loading MCP"
+	case actionMigrate:
+		return "migrating"
 	default:
 		return "idle"
 	}
@@ -924,6 +1011,7 @@ func skillEntries(entries []catalog.SkillEntry) []browser.Entry {
 			Description: description,
 			Badge:       badge,
 			FilterValue: entry.Name,
+			Raw:         entry,
 		})
 	}
 	return out
@@ -955,6 +1043,7 @@ func mcpEntries(entries []catalog.MCPEntry) []browser.Entry {
 			Description: description,
 			Badge:       badge,
 			FilterValue: entry.Name,
+			Raw:         entry,
 		})
 	}
 	return out
