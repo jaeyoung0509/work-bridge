@@ -25,11 +25,12 @@ type SkillEntry struct {
 }
 
 type MCPEntry struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Source  string `json:"source"`
-	Status  string `json:"status"`
-	Details string `json:"details"`
+	Name    string   `json:"name"`
+	Path    string   `json:"path"`
+	Source  string   `json:"source"`
+	Status  string   `json:"status"`
+	Details string   `json:"details"`
+	Servers []string `json:"servers,omitempty"`
 }
 
 type ProjectEntry struct {

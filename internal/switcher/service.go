@@ -190,7 +190,26 @@ func (s *Service) LoadMCP(_ context.Context, projectRoot string) ([]catalog.MCPE
 	if err != nil {
 		return nil, err
 	}
-	return catalog.ScanMCP(s.fs, projectRoot, s.homeDir, s.toolPaths)
+	entries, err := catalog.ScanMCP(s.fs, projectRoot, s.homeDir, s.toolPaths)
+	if err != nil {
+		return nil, err
+	}
+	// Enrich each entry by parsing its config to extract MCP server names
+	for i, entry := range entries {
+		data, readErr := s.fs.ReadFile(entry.Path)
+		if readErr != nil {
+			continue
+		}
+		summary := summarizeMCPConfig(entry.Path, data)
+		if len(summary.ServerNames) > 0 {
+			entries[i].Servers = summary.ServerNames
+			// Build a short summary for the list description
+			entries[i].Details = fmt.Sprintf("%d server(s): %s",
+				len(summary.ServerNames),
+				strings.Join(summary.ServerNames, ", "))
+		}
+	}
+	return entries, nil
 }
 
 func (s *Service) Preview(ctx context.Context, req Request) (Result, error) {
