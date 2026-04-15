@@ -27,8 +27,10 @@ type SkillEntry struct {
 type MCPEntry struct {
 	Name    string   `json:"name"`
 	Path    string   `json:"path"`
+	Tool    string   `json:"tool,omitempty"`
 	Source  string   `json:"source"`
 	Status  string   `json:"status"`
+	Format  string   `json:"format,omitempty"`
 	Details string   `json:"details"`
 	Servers []string `json:"servers,omitempty"`
 }
@@ -186,9 +188,17 @@ func ScanAllSkills(fs fsx.FS, cwd, homeDir string) ([]SkillEntry, error) {
 
 	// Sort: tool, then scope, then name
 	sort.Slice(entries, func(i, j int) bool {
+		ri, rj := toolSortRank(entries[i].Tool), toolSortRank(entries[j].Tool)
+		if ri != rj {
+			return ri < rj
+		}
 		ti, tj := entries[i].Tool, entries[j].Tool
 		if ti != tj {
 			return ti < tj
+		}
+		ri, rj = skillScopeRank(entries[i].Scope), skillScopeRank(entries[j].Scope)
+		if ri != rj {
+			return ri < rj
 		}
 		si, sj := entries[i].Scope, entries[j].Scope
 		if si != sj {
@@ -202,25 +212,25 @@ func ScanAllSkills(fs fsx.FS, cwd, homeDir string) ([]SkillEntry, error) {
 func ScanMCP(fs fsx.FS, cwd, homeDir string, paths domain.ToolPaths) ([]MCPEntry, error) {
 	projectRoot := nearestProjectRoot(fs, cwd)
 	candidates := []MCPEntry{}
-	addCandidate := func(name string, path string, source string) {
+	addCandidate := func(name string, path string, source string, tool string) {
 		if path == "" {
 			return
 		}
-		candidates = append(candidates, MCPEntry{Name: name, Path: filepath.Clean(path), Source: source})
+		candidates = append(candidates, MCPEntry{Name: name, Path: filepath.Clean(path), Source: source, Tool: tool})
 	}
 
-	addCandidate("project claude settings", filepath.Join(projectRoot, ".claude", "settings.json"), "project")
-	addCandidate("project claude local settings", filepath.Join(projectRoot, ".claude", "settings.local.json"), "local")
-	addCandidate("project gemini settings", filepath.Join(projectRoot, ".gemini", "settings.json"), "project")
-	addCandidate("project opencode config", filepath.Join(projectRoot, ".opencode", "opencode.jsonc"), "project")
-	addCandidate("project opencode config", filepath.Join(projectRoot, ".opencode", "opencode.json"), "project")
-	addCandidate("global codex config", filepath.Join(paths.Dir(domain.ToolCodex, homeDir), "config.toml"), "user")
-	addCandidate("global claude settings", filepath.Join(paths.Dir(domain.ToolClaude, homeDir), "settings.json"), "user")
-	addCandidate("global gemini settings", filepath.Join(paths.Dir(domain.ToolGemini, homeDir), "settings.json"), "user")
-	addCandidate("global opencode config", filepath.Join(homeDir, ".config", "opencode", "opencode.jsonc"), "user")
-	addCandidate("global opencode config", filepath.Join(homeDir, ".config", "opencode", "opencode.json"), "user")
-	addCandidate("legacy opencode config", filepath.Join(homeDir, ".local", "share", "opencode", "opencode.jsonc"), "legacy")
-	addCandidate("legacy opencode config", filepath.Join(homeDir, ".local", "share", "opencode", "opencode.json"), "legacy")
+	addCandidate("project claude settings", filepath.Join(projectRoot, ".claude", "settings.json"), "project", "claude")
+	addCandidate("project claude local settings", filepath.Join(projectRoot, ".claude", "settings.local.json"), "local", "claude")
+	addCandidate("project gemini settings", filepath.Join(projectRoot, ".gemini", "settings.json"), "project", "gemini")
+	addCandidate("project opencode config", filepath.Join(projectRoot, ".opencode", "opencode.jsonc"), "project", "opencode")
+	addCandidate("project opencode config", filepath.Join(projectRoot, ".opencode", "opencode.json"), "project", "opencode")
+	addCandidate("global codex config", filepath.Join(paths.Dir(domain.ToolCodex, homeDir), "config.toml"), "user", "codex")
+	addCandidate("global claude settings", filepath.Join(paths.Dir(domain.ToolClaude, homeDir), "settings.json"), "user", "claude")
+	addCandidate("global gemini settings", filepath.Join(paths.Dir(domain.ToolGemini, homeDir), "settings.json"), "user", "gemini")
+	addCandidate("global opencode config", filepath.Join(homeDir, ".config", "opencode", "opencode.jsonc"), "user", "opencode")
+	addCandidate("global opencode config", filepath.Join(homeDir, ".config", "opencode", "opencode.json"), "user", "opencode")
+	addCandidate("legacy opencode config", filepath.Join(homeDir, ".local", "share", "opencode", "opencode.jsonc"), "legacy", "opencode")
+	addCandidate("legacy opencode config", filepath.Join(homeDir, ".local", "share", "opencode", "opencode.json"), "legacy", "opencode")
 
 	entries := make([]MCPEntry, 0, len(candidates))
 	for _, item := range candidates {
@@ -234,6 +244,17 @@ func ScanMCP(fs fsx.FS, cwd, homeDir string, paths domain.ToolPaths) ([]MCPEntry
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
+		ri, rj := toolSortRank(entries[i].Tool), toolSortRank(entries[j].Tool)
+		if ri != rj {
+			return ri < rj
+		}
+		if entries[i].Tool != entries[j].Tool {
+			return entries[i].Tool < entries[j].Tool
+		}
+		ri, rj = mcpSourceRank(entries[i].Source), mcpSourceRank(entries[j].Source)
+		if ri != rj {
+			return ri < rj
+		}
 		if entries[i].Name == entries[j].Name {
 			return entries[i].Path < entries[j].Path
 		}
@@ -427,6 +448,53 @@ func skillEntryPriority(entry SkillEntry) int {
 		return 20
 	default:
 		return 30
+	}
+}
+
+func toolSortRank(tool string) int {
+	switch strings.TrimSpace(strings.ToLower(tool)) {
+	case "claude":
+		return 0
+	case "codex":
+		return 1
+	case "gemini":
+		return 2
+	case "opencode":
+		return 3
+	case "":
+		return 4
+	default:
+		return 5
+	}
+}
+
+func skillScopeRank(scope string) int {
+	switch strings.TrimSpace(strings.ToLower(scope)) {
+	case "project":
+		return 0
+	case "global":
+		return 1
+	case "user":
+		return 2
+	case "admin":
+		return 3
+	default:
+		return 4
+	}
+}
+
+func mcpSourceRank(source string) int {
+	switch strings.TrimSpace(strings.ToLower(source)) {
+	case "local":
+		return 0
+	case "project":
+		return 1
+	case "user":
+		return 2
+	case "legacy":
+		return 3
+	default:
+		return 4
 	}
 }
 

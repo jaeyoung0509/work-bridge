@@ -201,12 +201,18 @@ func (s *Service) LoadMCP(_ context.Context, projectRoot string) ([]catalog.MCPE
 			continue
 		}
 		summary := summarizeMCPConfig(entry.Path, data)
+		entries[i].Format = summary.Format
+		if summary.Status != "" {
+			entries[i].Status = summary.Status
+		}
 		if len(summary.ServerNames) > 0 {
 			entries[i].Servers = summary.ServerNames
 			// Build a short summary for the list description
 			entries[i].Details = fmt.Sprintf("%d server(s): %s",
 				len(summary.ServerNames),
 				strings.Join(summary.ServerNames, ", "))
+		} else if len(summary.Warnings) > 0 {
+			entries[i].Details = strings.Join(summary.Warnings, "; ")
 		}
 	}
 	return entries, nil

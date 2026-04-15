@@ -146,6 +146,86 @@ func TestSlashMCPSwitchesToBrowserScreen(t *testing.T) {
 	}
 }
 
+func TestProjectsTypingFiltersResults(t *testing.T) {
+	t.Parallel()
+	model, _ := bootstrapModel(t, newFakeBackend())
+	model = typeCommand(t, model, "/projects")
+	model = runKey(t, model, runeKey("o"))
+	model = runKey(t, model, runeKey("t"))
+	model = runKey(t, model, runeKey("h"))
+
+	if got := model.projectList.EntryCount(); got != 1 {
+		t.Fatalf("expected 1 filtered project, got %d", got)
+	}
+	entry, ok := model.projectList.SelectedEntry()
+	if !ok {
+		t.Fatal("expected a selected filtered project")
+	}
+	if entry.Key != "/repo/other" {
+		t.Fatalf("expected filtered project /repo/other, got %q", entry.Key)
+	}
+}
+
+func TestSkillsViewGroupsEntriesByTool(t *testing.T) {
+	t.Parallel()
+	backend := newFakeBackend()
+	backend.skills = []catalog.SkillEntry{
+		{
+			Name:        "shared-helper",
+			Description: "Shared helper",
+			EntryPath:   "/repo/project/.agents/skills/shared-helper/SKILL.md",
+			Source:      "project .agents/skills",
+			Scope:       "project",
+		},
+		{
+			Name:        "claude-review",
+			Description: "Claude reviewer",
+			EntryPath:   "/Users/test/.claude/skills/claude-review/SKILL.md",
+			Source:      "claude global skills",
+			Scope:       "global",
+			Tool:        "claude",
+		},
+	}
+
+	model, _ := bootstrapModel(t, backend)
+	model = typeCommand(t, model, "/skills")
+	view := model.View().Content
+	if !strings.Contains(view, "CLAUDE") || !strings.Contains(view, "SHARED") {
+		t.Fatalf("expected grouped tool headers in skills view, got %q", view)
+	}
+	if !strings.Contains(view, "type to filter") {
+		t.Fatalf("expected visible filter prompt in skills view, got %q", view)
+	}
+}
+
+func TestMCPActionMenuUsesImportLanguage(t *testing.T) {
+	t.Parallel()
+	backend := newFakeBackend()
+	backend.mcp = []catalog.MCPEntry{
+		{
+			Name:    "global claude settings",
+			Path:    "/Users/test/.claude/settings.json",
+			Tool:    "claude",
+			Source:  "user",
+			Status:  "parsed",
+			Format:  "json",
+			Details: "2 server(s): github, slack",
+			Servers: []string{"github", "slack"},
+		},
+	}
+
+	model, _ := bootstrapModel(t, backend)
+	model = typeCommand(t, model, "/mcp")
+	model = runKey(t, model, specialKey(tea.KeyEnter))
+	if model.screen != ScreenActionMenu {
+		t.Fatalf("expected action menu screen, got %v", model.screen)
+	}
+	view := model.View().Content
+	if !strings.Contains(view, "Import 2 MCP servers to CODEX") {
+		t.Fatalf("expected MCP import action label, got %q", view)
+	}
+}
+
 // ─── Test: Screen Stack Navigation ──────────────────────────
 
 func TestEscReturnsToHubFromProjects(t *testing.T) {

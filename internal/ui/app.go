@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -106,6 +107,7 @@ type actionFinishedMsg struct {
 	action actionKind
 	result switcher.Result
 	err    error
+	status string
 }
 type skillsLoadedMsg struct {
 	entries []catalog.SkillEntry
@@ -242,6 +244,34 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.actionMenuView.SetStatus("Migrating...", false)
 			return m, m.migrateCmd(msg)
 		}
+
+	// ── Browser / list selection messages ──
+	case browser.SelectedMsg:
+		switch m.screen {
+		case ScreenProjects:
+			m.activeProjectRoot = msg.Entry.Key
+			m.options.ProjectRoot = msg.Entry.Key
+			m.running = actionLoadWorkspace
+			m.pushScreen(ScreenSessions)
+			return m, m.loadWorkspaceCmd(m.activeProjectRoot)
+		case ScreenBrowser:
+			m.actionMenuView = actionmenu.New(msg.Entry)
+			m.actionMenuView.SetSize(m.width, m.height)
+			m.pushScreen(ScreenActionMenu)
+			return m, nil
+		}
+	case session.SessionSelectedMsg:
+		selected := msg.Session
+		m.selectedSession = &selected
+		m.handoffView = handoff.New(selected, m.activeProjectRoot, m.options.DefaultExportDir)
+		contentH := m.height - 8
+		if contentH < 10 {
+			contentH = 10
+		}
+		m.handoffView.SetSize(m.width-4, contentH)
+		m.pushScreen(ScreenHandoff)
+		m.running = actionPreview
+		return m, m.previewCmd(m.handoffView.BuildRequest())
 	}
 
 	// Per-screen update
@@ -275,7 +305,7 @@ func (m MainModel) handleGlobalKey(msg tea.KeyPressMsg) (bool, tea.Model, tea.Cm
 	}
 
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c":
 		if m.screen == ScreenHub {
 			m.quitting = true
 			return true, m, tea.Quit
@@ -283,6 +313,11 @@ func (m MainModel) handleGlobalKey(msg tea.KeyPressMsg) (bool, tea.Model, tea.Cm
 		// On non-hub screens, go back
 		model, cmd := m.popScreen()
 		return true, model, cmd
+	case "q":
+		if m.screen == ScreenHub {
+			m.quitting = true
+			return true, m, tea.Quit
+		}
 	case "esc":
 		if m.screen != ScreenHub {
 			model, cmd := m.popScreen()
@@ -429,61 +464,17 @@ func (m MainModel) handleHubClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 // ─── Projects Screen ────────────────────────────────────────
 
 func (m MainModel) updateProjects(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
-		switch keyMsg.String() {
-		case "up", "k":
-			m.projectList.List.CursorUp()
-			return m, nil
-		case "down", "j":
-			m.projectList.List.CursorDown()
-			return m, nil
-		case "enter":
-			if entry, ok := m.projectList.SelectedEntry(); ok {
-				m.activeProjectRoot = entry.Key
-				m.options.ProjectRoot = entry.Key
-				m.running = actionLoadWorkspace
-				m.pushScreen(ScreenSessions)
-				return m, m.loadWorkspaceCmd(m.activeProjectRoot)
-			}
-		}
-	}
-	return m, nil
+	updated, cmd := m.projectList.Update(msg)
+	m.projectList = updated.(browser.Model)
+	return m, cmd
 }
 
 // ─── Sessions Screen ────────────────────────────────────────
 
 func (m MainModel) updateSessions(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
-		switch keyMsg.String() {
-		case "up", "k":
-			m.sessionList.List.CursorUp()
-			return m, nil
-		case "down", "j":
-			m.sessionList.List.CursorDown()
-			return m, nil
-		case "enter":
-			if selected, ok := m.sessionList.List.SelectedItem().(interface {
-				Title() string
-				Description() string
-			}); ok {
-				for _, s := range m.workspace.Sessions {
-					if string(s.Tool)+" • "+s.ID == selected.Description() {
-						m.selectedSession = &s
-						m.handoffView = handoff.New(s, m.activeProjectRoot, m.options.DefaultExportDir)
-						contentH := m.height - 8
-						if contentH < 10 {
-							contentH = 10
-						}
-						m.handoffView.SetSize(m.width-4, contentH)
-						m.pushScreen(ScreenHandoff)
-						m.running = actionPreview
-						return m, m.previewCmd(m.handoffView.BuildRequest())
-					}
-				}
-			}
-		}
-	}
-	return m, nil
+	updated, cmd := m.sessionList.Update(msg)
+	m.sessionList = updated.(session.Model)
+	return m, cmd
 }
 
 // ─── Handoff Screen ─────────────────────────────────────────
@@ -511,24 +502,9 @@ func (m MainModel) updateHandoff(msg tea.Msg) (tea.Model, tea.Cmd) {
 // ─── Browser Screen ─────────────────────────────────────────
 
 func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
-		switch keyMsg.String() {
-		case "up", "k":
-			m.browserView.List.CursorUp()
-			return m, nil
-		case "down", "j":
-			m.browserView.List.CursorDown()
-			return m, nil
-		case "enter":
-			if entry, ok := m.browserView.SelectedEntry(); ok {
-				m.actionMenuView = actionmenu.New(entry)
-				m.actionMenuView.SetSize(m.width, m.height)
-				m.pushScreen(ScreenActionMenu)
-				return m, nil
-			}
-		}
-	}
-	return m, nil
+	updated, cmd := m.browserView.Update(msg)
+	m.browserView = updated.(browser.Model)
+	return m, cmd
 }
 
 // ─── Action Menu Screen ──────────────────────────────────────
@@ -568,6 +544,8 @@ func (m MainModel) handleProjectsLoaded(msg projectsLoadedMsg) (tea.Model, tea.C
 	m.projects = msg.entries
 	m.lastErr = msg.err
 	if msg.err == nil {
+		m.projectList.SetTitle("Projects")
+		m.projectList.SetSubtitle("Search by project name, path, or marker")
 		m.projectList.SetEntries(projectEntries(msg.entries))
 		if m.activeProjectRoot == "" && len(msg.entries) > 0 {
 			m.activeProjectRoot = msg.entries[0].Root
@@ -614,7 +592,11 @@ func (m MainModel) handleActionFinished(msg actionFinishedMsg) (tea.Model, tea.C
 		if msg.err != nil {
 			m.actionMenuView.SetStatus("Error: "+msg.err.Error(), true)
 		} else {
-			m.actionMenuView.SetStatus("✓ Migration complete!", false)
+			status := msg.status
+			if strings.TrimSpace(status) == "" {
+				status = "Migration complete"
+			}
+			m.actionMenuView.SetStatus(status, false)
 		}
 	default:
 		if msg.err == nil {
@@ -632,6 +614,8 @@ func (m MainModel) handleSkillsLoaded(msg skillsLoadedMsg) (tea.Model, tea.Cmd) 
 	m.lastErr = msg.err
 	if msg.err == nil {
 		m.browserView.SetTitle("Skills")
+		m.browserView.SetSubtitle("Grouped by tool so you can install into another agent quickly")
+		m.browserView.ResetQuery()
 		m.browserView.SetEntries(skillEntries(msg.entries))
 	}
 	return m, nil
@@ -642,6 +626,8 @@ func (m MainModel) handleMCPLoaded(msg mcpLoadedMsg) (tea.Model, tea.Cmd) {
 	m.lastErr = msg.err
 	if msg.err == nil {
 		m.browserView.SetTitle("MCP")
+		m.browserView.SetSubtitle("Config sources and importable servers by tool")
+		m.browserView.ResetQuery()
 		m.browserView.SetEntries(mcpEntries(msg.entries))
 	}
 	return m, nil
@@ -701,15 +687,22 @@ func (m MainModel) exportCmd(req switcher.Request, outDir string) tea.Cmd {
 func (m MainModel) migrateCmd(msg actionmenu.ActionSelectedMsg) tea.Cmd {
 	return func() tea.Msg {
 		var err error
+		status := ""
 		switch raw := msg.Entry.Raw.(type) {
 		case catalog.MCPEntry:
 			err = m.backend.MigrateMCP(m.ctx, raw, msg.Target, m.activeProjectRoot)
+			if err == nil {
+				status = fmt.Sprintf("Imported MCP into %s", strings.ToUpper(string(msg.Target)))
+			}
 		case catalog.SkillEntry:
 			err = m.backend.MigrateSkill(m.ctx, raw, msg.Target, m.activeProjectRoot)
+			if err == nil {
+				status = fmt.Sprintf("Installed skill into %s", strings.ToUpper(string(msg.Target)))
+			}
 		default:
 			err = fmt.Errorf("unknown entry type for migration")
 		}
-		return actionFinishedMsg{action: actionMigrate, err: err}
+		return actionFinishedMsg{action: actionMigrate, err: err, status: status}
 	}
 }
 
@@ -917,13 +910,13 @@ func (m MainModel) renderFooter() string {
 	case ScreenHub:
 		help = "↑↓: navigate • enter: select • /: commands • q: quit"
 	case ScreenProjects:
-		help = "↑↓: navigate • enter: select project • esc: back • /: commands"
+		help = "type: filter • ↑↓: navigate • enter: open project • backspace: clear • esc: back"
 	case ScreenSessions:
-		help = "↑↓: navigate • enter: handoff • esc: back • /: commands"
+		help = "type: filter • ↑↓: navigate • enter: handoff • esc: back • /: commands"
 	case ScreenHandoff:
 		help = "↑↓: options • ←→: adjust • enter: confirm • esc: back"
 	case ScreenBrowser:
-		help = "↑↓: navigate • enter: open • esc: back"
+		help = "type: filter • ↑↓: navigate • enter: actions • backspace: clear • esc: back"
 	case ScreenActionMenu:
 		help = "↑↓: navigate • enter: execute • esc: back"
 	}
@@ -971,16 +964,22 @@ func shortPath(path string) string {
 func projectEntries(entries []catalog.ProjectEntry) []browser.Entry {
 	out := make([]browser.Entry, 0, len(entries))
 	for _, entry := range entries {
-		markers := strings.Join(entry.Markers, ", ")
-		desc := entry.Root
-		if markers != "" {
-			desc = entry.Root + "  [" + markers + "]"
+		section := shortPath(entry.WorkspaceRoot)
+		if strings.TrimSpace(section) == "" {
+			section = "Workspace"
+		}
+		details := []string{}
+		if entry.WorkspaceRoot != "" && entry.WorkspaceRoot != entry.Root {
+			details = append(details, "workspace: "+entry.WorkspaceRoot)
 		}
 		out = append(out, browser.Entry{
 			Key:         entry.Root,
 			Title:       entry.Name,
-			Description: desc,
-			FilterValue: entry.Name,
+			Description: entry.Root,
+			Section:     section,
+			Meta:        append([]string{}, entry.Markers...),
+			Details:     details,
+			FilterValue: strings.Join(append([]string{entry.Name, entry.Root, entry.WorkspaceRoot}, entry.Markers...), " "),
 		})
 	}
 	return out
@@ -989,33 +988,17 @@ func projectEntries(entries []catalog.ProjectEntry) []browser.Entry {
 func skillEntries(entries []catalog.SkillEntry) []browser.Entry {
 	out := make([]browser.Entry, 0, len(entries))
 	for _, entry := range entries {
+		badge := normalizedTool(entry.Tool, entry.RootPath)
 		description := strings.TrimSpace(entry.Description)
-
-		// Build a richer description line: scope + source info
-		scope := ""
+		if description == "" {
+			description = entry.Source
+		}
+		meta := []string{}
 		if entry.Scope != "" {
-			scope = "[" + entry.Scope + "] "
+			meta = append(meta, entry.Scope)
 		}
-		if description != "" {
-			description = scope + description
-		} else {
-			description = scope + entry.Source
-		}
-
-		// Determine badge from catalog Tool, then fallback to path heuristics
-		badge := entry.Tool
-		if badge == "" {
-			lower := strings.ToLower(entry.RootPath)
-			switch {
-			case strings.Contains(lower, "/.codex/") || strings.Contains(lower, "/codex/"):
-				badge = "codex"
-			case strings.Contains(lower, "/.claude/"):
-				badge = "claude"
-			case strings.Contains(lower, "/.gemini/"):
-				badge = "gemini"
-			case strings.Contains(lower, "opencode"):
-				badge = "opencode"
-			}
+		if source := compactSource(entry.Source); source != "" {
+			meta = append(meta, source)
 		}
 
 		out = append(out, browser.Entry{
@@ -1023,7 +1006,10 @@ func skillEntries(entries []catalog.SkillEntry) []browser.Entry {
 			Title:       entry.Name,
 			Description: description,
 			Badge:       badge,
-			FilterValue: entry.Name + " " + badge + " " + entry.Scope,
+			Section:     toolSectionTitle(badge),
+			Meta:        meta,
+			Details:     []string{entry.EntryPath},
+			FilterValue: strings.Join([]string{entry.Name, description, badge, entry.Scope, entry.Source, entry.EntryPath}, " "),
 			Raw:         entry,
 		})
 	}
@@ -1033,31 +1019,113 @@ func skillEntries(entries []catalog.SkillEntry) []browser.Entry {
 func mcpEntries(entries []catalog.MCPEntry) []browser.Entry {
 	out := make([]browser.Entry, 0, len(entries))
 	for _, entry := range entries {
+		badge := normalizedTool(entry.Tool, entry.Name+" "+entry.Path)
 		description := strings.TrimSpace(entry.Details)
 		if description == "" {
 			description = entry.Source
 		}
-		
-		badge := ""
-		lowerName := strings.ToLower(entry.Name)
-		if strings.Contains(lowerName, "codex") {
-			badge = "codex"
-		} else if strings.Contains(lowerName, "claude") {
-			badge = "claude"
-		} else if strings.Contains(lowerName, "gemini") {
-			badge = "gemini"
-		} else if strings.Contains(lowerName, "opencode") {
-			badge = "opencode"
+		meta := []string{}
+		if entry.Source != "" {
+			meta = append(meta, sourceLabel(entry.Source))
 		}
+		if entry.Format != "" {
+			meta = append(meta, entry.Format)
+		}
+		if entry.Status != "" {
+			meta = append(meta, entry.Status)
+		}
+		title := mcpDisplayTitle(entry)
 
 		out = append(out, browser.Entry{
 			Key:         entry.Path,
-			Title:       entry.Name,
+			Title:       title,
 			Description: description,
 			Badge:       badge,
-			FilterValue: entry.Name,
+			Section:     toolSectionTitle(badge),
+			Meta:        meta,
+			Details:     []string{entry.Path},
+			FilterValue: strings.Join([]string{title, entry.Name, description, badge, entry.Source, entry.Path, strings.Join(entry.Servers, " ")}, " "),
 			Raw:         entry,
 		})
 	}
 	return out
+}
+
+func normalizedTool(tool string, fallback string) string {
+	tool = strings.TrimSpace(strings.ToLower(tool))
+	if tool != "" {
+		return tool
+	}
+	lower := strings.ToLower(fallback)
+	switch {
+	case strings.Contains(lower, "codex"):
+		return "codex"
+	case strings.Contains(lower, "claude"):
+		return "claude"
+	case strings.Contains(lower, "gemini"):
+		return "gemini"
+	case strings.Contains(lower, "opencode"):
+		return "opencode"
+	default:
+		return ""
+	}
+}
+
+func toolSectionTitle(tool string) string {
+	switch strings.TrimSpace(strings.ToLower(tool)) {
+	case "claude":
+		return "Claude"
+	case "codex":
+		return "Codex"
+	case "gemini":
+		return "Gemini"
+	case "opencode":
+		return "OpenCode"
+	default:
+		return "Shared"
+	}
+}
+
+func compactSource(source string) string {
+	source = strings.TrimSpace(strings.ToLower(source))
+	source = strings.TrimPrefix(source, "project ")
+	source = strings.TrimPrefix(source, "user ")
+	return strings.TrimSpace(source)
+}
+
+func sourceLabel(source string) string {
+	switch strings.TrimSpace(strings.ToLower(source)) {
+	case "local":
+		return "local"
+	case "project":
+		return "project"
+	case "user":
+		return "global"
+	case "legacy":
+		return "legacy"
+	default:
+		return strings.TrimSpace(source)
+	}
+}
+
+func mcpDisplayTitle(entry catalog.MCPEntry) string {
+	base := filepath.Base(entry.Path)
+	scope := sourceLabel(entry.Source)
+	if scope == "" {
+		scope = "config"
+	}
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return titleWord(scope) + " config"
+	}
+	return titleWord(scope) + " config · " + base
+}
+
+func titleWord(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	runes := []rune(strings.ToLower(value))
+	runes[0] = []rune(strings.ToUpper(string(runes[0])))[0]
+	return string(runes)
 }
