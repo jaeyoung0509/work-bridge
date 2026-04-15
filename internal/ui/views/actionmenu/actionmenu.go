@@ -168,11 +168,11 @@ func (m Model) View() tea.View {
 }
 
 func buildOptions(entry browser.Entry) []actionOption {
-	options := []actionOption{{label: "Edit in $EDITOR", action: ActionEdit}}
+	options := []actionOption{}
 	sourceTool := strings.TrimSpace(strings.ToLower(entry.Badge))
 	migrateAllowed := canMigrate(entry)
 
-	for _, tool := range []domain.Tool{domain.ToolCodex, domain.ToolGemini, domain.ToolClaude, domain.ToolOpenCode} {
+	for _, tool := range []domain.Tool{domain.ToolClaude, domain.ToolGemini, domain.ToolCodex, domain.ToolOpenCode} {
 		if sourceTool != "" && sourceTool == string(tool) {
 			continue
 		}
@@ -185,6 +185,7 @@ func buildOptions(entry browser.Entry) []actionOption {
 			target: tool,
 		})
 	}
+	options = append(options, actionOption{label: "Edit in $EDITOR", action: ActionEdit})
 	return options
 }
 
@@ -209,7 +210,7 @@ func actionLabel(entry browser.Entry, target domain.Tool) string {
 		}
 		return fmt.Sprintf("Import %d MCP servers to %s", serverCount, targetLabel)
 	case catalog.SkillEntry:
-		return fmt.Sprintf("Install skill to %s", targetLabel)
+		return fmt.Sprintf("Install into %s", targetLabel)
 	default:
 		return fmt.Sprintf("Migrate to %s", targetLabel)
 	}
@@ -220,7 +221,7 @@ func entryKind(entry browser.Entry) string {
 	case catalog.MCPEntry:
 		return "MCP Import"
 	case catalog.SkillEntry:
-		return "Skill Install"
+		return "Skill Transfer"
 	default:
 		return "Asset Actions"
 	}
@@ -232,13 +233,29 @@ func actionHint(entry browser.Entry) string {
 		if len(raw.Servers) == 0 {
 			return "No importable MCP servers were detected in this config yet."
 		}
-		return fmt.Sprintf("Detected servers: %s", strings.Join(raw.Servers, ", "))
+		return fmt.Sprintf("Ready to import: %s", strings.Join(raw.Servers, ", "))
 	case catalog.SkillEntry:
+		targets := skillTargets(strings.TrimSpace(strings.ToLower(entry.Badge)))
+		if len(targets) > 0 {
+			return fmt.Sprintf("Ready to install into: %s", strings.Join(targets, ", "))
+		}
 		if len(raw.Files) > 0 {
 			return fmt.Sprintf("Bundle includes %d file(s).", len(raw.Files))
 		}
 	}
 	return ""
+}
+
+func skillTargets(sourceTool string) []string {
+	ordered := []string{"CLAUDE", "GEMINI", "CODEX", "OPENCODE"}
+	targets := make([]string, 0, len(ordered))
+	for _, candidate := range ordered {
+		if strings.EqualFold(candidate, sourceTool) {
+			continue
+		}
+		targets = append(targets, candidate)
+	}
+	return targets
 }
 
 func renderMeta(values []string) string {

@@ -2,8 +2,8 @@ package session
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/bubbles/list"
 	"github.com/jaeyoung0509/work-bridge/internal/switcher"
+	"github.com/jaeyoung0509/work-bridge/internal/ui/views/browser"
 )
 
 type SessionSelectedMsg struct {
@@ -11,25 +11,13 @@ type SessionSelectedMsg struct {
 }
 
 type Model struct {
-	List list.Model
-	err  error
+	browser browser.Model
 }
-
-type item struct {
-	session switcher.WorkspaceItem
-}
-
-func (i item) Title() string       { return i.session.Title }
-func (i item) Description() string { return string(i.session.Tool) + " • " + i.session.ID }
-func (i item) FilterValue() string { return i.session.Title }
 
 func NewModel() Model {
-	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	l.Title = "Select a Session"
-	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(true)
-	l.SetShowHelp(false)
-	return Model{List: l}
+	b := browser.NewModel("Sessions")
+	b.SetSubtitle("Search by session title, tool, or session id")
+	return Model{browser: b}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -37,47 +25,67 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	newList, listCmd := m.List.Update(msg)
-	m.List = newList
-	if listCmd != nil {
-		cmd = func() tea.Msg { return listCmd() }
-	}
-
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		h, w := msg.Height, msg.Width
-		m.List.SetSize(w, h)
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		m.browser.SetSize(size.Width, size.Height)
 		return m, nil
+	}
 
-	case tea.KeyPressMsg:
-		if msg.String() == "enter" {
-			if selected, ok := m.List.SelectedItem().(item); ok {
+	updated, cmd := m.browser.Update(msg)
+	m.browser = updated.(browser.Model)
+	if cmd != nil {
+		result := cmd()
+		if selected, ok := result.(browser.SelectedMsg); ok {
+			if sessionItem, ok := selected.Entry.Raw.(switcher.WorkspaceItem); ok {
 				return m, func() tea.Msg {
-					return SessionSelectedMsg{Session: selected.session}
-				}
-			}
-		}
-	case tea.MouseClickMsg:
-		if msg.Mouse().Button == tea.MouseLeft {
-			if selected, ok := m.List.SelectedItem().(item); ok {
-				return m, func() tea.Msg {
-					return SessionSelectedMsg{Session: selected.session}
+					return SessionSelectedMsg{Session: sessionItem}
 				}
 			}
 		}
 	}
-	return m, cmd
+	return m, nil
 }
 
 func (m Model) View() tea.View {
-	return tea.NewView(m.List.View())
+	return m.browser.View()
+}
+
+func (m *Model) SetSize(width, height int) {
+	m.browser.SetSize(width, height)
 }
 
 func (m *Model) SetSessions(sessions []switcher.WorkspaceItem) {
-	items := make([]list.Item, len(sessions))
-	for i, s := range sessions {
-		items[i] = item{session: s}
+	entries := make([]browser.Entry, 0, len(sessions))
+	for _, s := range sessions {
+		details := []string{}
+		if s.ProjectRoot != "" {
+			details = append(details, s.ProjectRoot)
+		}
+		entries = append(entries, browser.Entry{
+			Key:         s.ID,
+			Title:       s.Title,
+			Description: string(s.Tool) + " • " + s.ID,
+			Badge:       string(s.Tool),
+			Section:     browserSection(string(s.Tool)),
+			Details:     details,
+			FilterValue: s.Title + " " + s.ID + " " + string(s.Tool) + " " + s.ProjectRoot,
+			Raw:         s,
+		})
 	}
-	m.List.SetItems(items)
+	m.browser.SetEntries(entries)
+	m.browser.Select(0)
+}
+
+func browserSection(tool string) string {
+	switch tool {
+	case "claude":
+		return "Claude"
+	case "codex":
+		return "Codex"
+	case "gemini":
+		return "Gemini"
+	case "opencode":
+		return "OpenCode"
+	default:
+		return "Sessions"
+	}
 }

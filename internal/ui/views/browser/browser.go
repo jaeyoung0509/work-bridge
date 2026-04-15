@@ -12,6 +12,8 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/ui/styles"
 )
 
+const browserChromeHeight = 4
+
 type Entry struct {
 	Key         string
 	Title       string
@@ -140,6 +142,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, func() tea.Msg { return SelectedMsg{Entry: selected.entry} }
 			}
 			return m, nil
+		case "up", "k":
+			m.List.CursorUp()
+			return m, nil
+		case "down", "j":
+			m.List.CursorDown()
+			return m, nil
+		case "pgup":
+			m.List.PrevPage()
+			return m, nil
+		case "pgdown":
+			m.List.NextPage()
+			return m, nil
+		case "home", "g":
+			m.List.GoToStart()
+			return m, nil
+		case "end", "G":
+			m.List.GoToEnd()
+			return m, nil
 		case "backspace":
 			if m.query != "" {
 				m.query = trimLastRune(m.query)
@@ -152,8 +172,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.applyFilter()
 			}
 			return m, nil
-		case "up", "down", "pgup", "pgdown", "home", "end":
-			// Let the list handle navigation.
 		default:
 			key := msg.Key()
 			if key.Mod == 0 && key.Text != "" {
@@ -164,19 +182,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseClickMsg:
 		if msg.Mouse().Button == tea.MouseLeft {
+			if index, ok := m.entryIndexAt(msg.Mouse().Y); ok {
+				m.List.Select(index)
+			}
 			if selected, ok := m.List.SelectedItem().(item); ok {
 				return m, func() tea.Msg { return SelectedMsg{Entry: selected.entry} }
 			}
 		}
 	}
 
-	var cmd tea.Cmd
-	newList, listCmd := m.List.Update(msg)
-	m.List = newList
-	if listCmd != nil {
-		cmd = func() tea.Msg { return listCmd() }
-	}
-	return m, cmd
+	return m, nil
 }
 
 func (m Model) View() tea.View {
@@ -242,6 +257,49 @@ func (m Model) EntryCount() int {
 
 func (m Model) Query() string {
 	return m.query
+}
+
+func (m *Model) Select(index int) {
+	if index < 0 || index >= len(m.filteredEntries) {
+		return
+	}
+	m.List.Select(index)
+}
+
+func (m Model) entryIndexAt(y int) (int, bool) {
+	if y < browserChromeHeight {
+		return 0, false
+	}
+
+	row := y - browserChromeHeight
+	if row < 0 {
+		return 0, false
+	}
+
+	start, end := m.List.Paginator.GetSliceBounds(len(m.filteredEntries))
+	if start < 0 {
+		start = 0
+	}
+	if end > len(m.filteredEntries) {
+		end = len(m.filteredEntries)
+	}
+
+	visualRow := 0
+	for idx := start; idx < end; idx++ {
+		entry := m.filteredEntries[idx]
+		if shouldRenderSectionHeaderForEntries(m.filteredEntries, idx, entry.Section) {
+			if row == visualRow {
+				return idx, true
+			}
+			visualRow++
+		}
+		if row >= visualRow && row < visualRow+4 {
+			return idx, true
+		}
+		visualRow += 4
+	}
+
+	return 0, false
 }
 
 func (m *Model) applyFilter() {
@@ -323,6 +381,21 @@ func shouldRenderSectionHeader(m list.Model, index int, section string) bool {
 		return true
 	}
 	prevSection := strings.TrimSpace(previous.entry.Section)
+	if prevSection == "" {
+		prevSection = "Items"
+	}
+	return prevSection != section
+}
+
+func shouldRenderSectionHeaderForEntries(entries []Entry, index int, section string) bool {
+	section = strings.TrimSpace(section)
+	if section == "" {
+		section = "Items"
+	}
+	if index == 0 {
+		return true
+	}
+	prevSection := strings.TrimSpace(entries[index-1].Section)
 	if prevSection == "" {
 		prevSection = "Items"
 	}

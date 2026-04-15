@@ -144,6 +144,9 @@ func TestSlashMCPSwitchesToBrowserScreen(t *testing.T) {
 	if model.screen != ScreenBrowser {
 		t.Fatalf("expected browser screen for MCP, got %v", model.screen)
 	}
+	if len(model.browserView.List.Items()) != 1 {
+		t.Fatalf("expected detected MCP config to remain visible, got %d entries", len(model.browserView.List.Items()))
+	}
 }
 
 func TestProjectsTypingFiltersResults(t *testing.T) {
@@ -163,6 +166,45 @@ func TestProjectsTypingFiltersResults(t *testing.T) {
 	}
 	if entry.Key != "/repo/other" {
 		t.Fatalf("expected filtered project /repo/other, got %q", entry.Key)
+	}
+}
+
+func TestProjectsArrowNavigationMovesSelection(t *testing.T) {
+	t.Parallel()
+
+	model, _ := bootstrapModel(t, newFakeBackend())
+	model = typeCommand(t, model, "/projects")
+	model = runKey(t, model, specialKey(tea.KeyDown))
+
+	entry, ok := model.projectList.SelectedEntry()
+	if !ok {
+		t.Fatal("expected a selected project after moving down")
+	}
+	if entry.Key != "/repo/other" {
+		t.Fatalf("expected /repo/other to be selected, got %q", entry.Key)
+	}
+}
+
+func TestSessionsArrowNavigationMovesSelection(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	backend.workspace.Sessions = []switcher.WorkspaceItem{
+		{Tool: domain.ToolCodex, ID: "session-1", Title: "Codex task", ProjectRoot: "/repo/project"},
+		{Tool: domain.ToolClaude, ID: "session-2", Title: "Claude task", ProjectRoot: "/repo/project"},
+	}
+	backend.workspaces["/repo/project"] = backend.workspace
+
+	model, _ := bootstrapModel(t, backend)
+	model = typeCommand(t, model, "/sessions")
+	model = runKey(t, model, specialKey(tea.KeyDown))
+	model = runKey(t, model, specialKey(tea.KeyEnter))
+
+	if model.screen != ScreenHandoff {
+		t.Fatalf("expected handoff screen after selecting a session, got %v", model.screen)
+	}
+	if model.selectedSession == nil || model.selectedSession.ID != "session-2" {
+		t.Fatalf("expected session-2 to be selected, got %#v", model.selectedSession)
 	}
 }
 
@@ -198,6 +240,27 @@ func TestSkillsViewGroupsEntriesByTool(t *testing.T) {
 	}
 }
 
+func TestSkillEntriesShowInstallTargets(t *testing.T) {
+	t.Parallel()
+
+	entries := skillEntries([]catalog.SkillEntry{{
+		Name:        "gemini-helper",
+		Description: "Gemini helper",
+		EntryPath:   "/Users/test/.gemini/skills/gemini-helper/SKILL.md",
+		Source:      "gemini global skills",
+		Scope:       "global",
+		Tool:        "gemini",
+	}})
+
+	if len(entries) != 1 {
+		t.Fatalf("expected one skill entry, got %d", len(entries))
+	}
+	detail := strings.Join(entries[0].Details, " ")
+	if !strings.Contains(detail, "install into: CLAUDE, CODEX, OPENCODE") {
+		t.Fatalf("expected transferable targets in skill details, got %q", detail)
+	}
+}
+
 func TestMCPActionMenuUsesImportLanguage(t *testing.T) {
 	t.Parallel()
 	backend := newFakeBackend()
@@ -223,6 +286,70 @@ func TestMCPActionMenuUsesImportLanguage(t *testing.T) {
 	view := model.View().Content
 	if !strings.Contains(view, "Import 2 MCP servers to CODEX") {
 		t.Fatalf("expected MCP import action label, got %q", view)
+	}
+}
+
+func TestMCPEntriesKeepConfigsWithoutServersVisible(t *testing.T) {
+	t.Parallel()
+
+	entries := mcpEntries([]catalog.MCPEntry{
+		{
+			Name:   "empty config",
+			Path:   "/Users/test/.codex/config.toml",
+			Tool:   "codex",
+			Source: "user",
+			Status: "configured",
+			Format: "toml",
+		},
+		{
+			Name:    "global claude settings",
+			Path:    "/Users/test/.claude/settings.json",
+			Tool:    "claude",
+			Source:  "user",
+			Status:  "parsed",
+			Format:  "json",
+			Servers: []string{"github"},
+		},
+	})
+
+	if len(entries) != 2 {
+		t.Fatalf("expected both importable and non-importable MCP configs, got %#v", entries)
+	}
+	if entries[0].Key != "/Users/test/.claude/settings.json" {
+		t.Fatalf("expected importable claude config first, got %q", entries[0].Key)
+	}
+	if entries[1].Key != "/Users/test/.codex/config.toml" {
+		t.Fatalf("expected non-importable codex config to remain visible, got %q", entries[1].Key)
+	}
+	if !strings.Contains(entries[1].Description, "No importable MCP servers") {
+		t.Fatalf("expected explanatory description for non-importable MCP config, got %q", entries[1].Description)
+	}
+	if !strings.Contains(strings.Join(entries[1].Details, " "), "edit this config") {
+		t.Fatalf("expected recovery hint in non-importable MCP details, got %#v", entries[1].Details)
+	}
+}
+
+func TestMCPScreenExplainsConfigsWithoutServers(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	backend.mcp = []catalog.MCPEntry{{
+		Name:   "project claude settings",
+		Path:   "/repo/project/.claude/settings.json",
+		Tool:   "claude",
+		Source: "project",
+		Status: "configured",
+		Format: "json",
+	}}
+
+	model, _ := bootstrapModel(t, backend)
+	model = typeCommand(t, model, "/mcp")
+	view := model.View().Content
+	if !strings.Contains(view, "none define importable MCP servers yet") {
+		t.Fatalf("expected empty MCP explanation in view, got %q", view)
+	}
+	if !strings.Contains(view, "No importable MCP servers detected yet") {
+		t.Fatalf("expected per-config MCP explanation in view, got %q", view)
 	}
 }
 

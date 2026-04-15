@@ -415,7 +415,7 @@ func (m *MainModel) updateSizes() {
 		contentH = 10
 	}
 	m.projectList.SetSize(m.width-6, contentH)
-	m.sessionList.List.SetSize(m.width-6, contentH)
+	m.sessionList.SetSize(m.width-6, contentH)
 	m.browserView.SetSize(m.width-6, contentH)
 	m.cmdPalette.SetWidth(m.width)
 }
@@ -464,6 +464,11 @@ func (m MainModel) handleHubClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 // ─── Projects Screen ────────────────────────────────────────
 
 func (m MainModel) updateProjects(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if click, ok := msg.(tea.MouseClickMsg); ok && click.Mouse().Button == tea.MouseLeft {
+		if translated, ok := m.translatePaneClick(click); ok {
+			msg = translated
+		}
+	}
 	updated, cmd := m.projectList.Update(msg)
 	m.projectList = updated.(browser.Model)
 	return m, cmd
@@ -472,6 +477,11 @@ func (m MainModel) updateProjects(msg tea.Msg) (tea.Model, tea.Cmd) {
 // ─── Sessions Screen ────────────────────────────────────────
 
 func (m MainModel) updateSessions(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if click, ok := msg.(tea.MouseClickMsg); ok && click.Mouse().Button == tea.MouseLeft {
+		if translated, ok := m.translatePaneClick(click); ok {
+			msg = translated
+		}
+	}
 	updated, cmd := m.sessionList.Update(msg)
 	m.sessionList = updated.(session.Model)
 	return m, cmd
@@ -502,6 +512,11 @@ func (m MainModel) updateHandoff(msg tea.Msg) (tea.Model, tea.Cmd) {
 // ─── Browser Screen ─────────────────────────────────────────
 
 func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if click, ok := msg.(tea.MouseClickMsg); ok && click.Mouse().Button == tea.MouseLeft {
+		if translated, ok := m.translatePaneClick(click); ok {
+			msg = translated
+		}
+	}
 	updated, cmd := m.browserView.Update(msg)
 	m.browserView = updated.(browser.Model)
 	return m, cmd
@@ -566,7 +581,6 @@ func (m MainModel) handleWorkspaceLoaded(msg workspaceLoadedMsg) (tea.Model, tea
 	if msg.err == nil {
 		m.sessionList.SetSessions(msg.workspace.Sessions)
 		if len(msg.workspace.Sessions) > 0 {
-			m.sessionList.List.Select(0)
 		} else {
 			m.selectedSession = nil
 		}
@@ -614,7 +628,7 @@ func (m MainModel) handleSkillsLoaded(msg skillsLoadedMsg) (tea.Model, tea.Cmd) 
 	m.lastErr = msg.err
 	if msg.err == nil {
 		m.browserView.SetTitle("Skills")
-		m.browserView.SetSubtitle("Grouped by tool so you can install into another agent quickly")
+		m.browserView.SetSubtitle("Grouped by source tool so you can install into another agent quickly")
 		m.browserView.ResetQuery()
 		m.browserView.SetEntries(skillEntries(msg.entries))
 	}
@@ -625,10 +639,21 @@ func (m MainModel) handleMCPLoaded(msg mcpLoadedMsg) (tea.Model, tea.Cmd) {
 	m.running = actionNone
 	m.lastErr = msg.err
 	if msg.err == nil {
+		entries := mcpEntries(msg.entries)
+		importable := countImportableMCPEntries(msg.entries)
 		m.browserView.SetTitle("MCP")
-		m.browserView.SetSubtitle("Config sources and importable servers by tool")
+		switch {
+		case len(msg.entries) == 0:
+			m.browserView.SetSubtitle("No MCP config files were detected for the connected tools")
+		case importable == 0:
+			m.browserView.SetSubtitle(fmt.Sprintf("Detected %d config file(s), but none define importable MCP servers yet", len(msg.entries)))
+		case importable == len(msg.entries):
+			m.browserView.SetSubtitle(fmt.Sprintf("%d config file(s) are ready to import", importable))
+		default:
+			m.browserView.SetSubtitle(fmt.Sprintf("%d config file(s) are ready to import; %d more were detected but still need MCP server definitions", importable, len(msg.entries)-importable))
+		}
 		m.browserView.ResetQuery()
-		m.browserView.SetEntries(mcpEntries(msg.entries))
+		m.browserView.SetEntries(entries)
 	}
 	return m, nil
 }
@@ -839,13 +864,7 @@ func (m MainModel) renderSessionsScreen() string {
 	if contentH < 10 {
 		contentH = 10
 	}
-
-	header := styles.SectionTitle.Render("◇ Sessions") + "  " +
-		styles.Muted.Render(m.activeProjectRoot) + "\n"
-
-	return styles.ActivePane.Width(m.width - 6).Height(contentH).Render(
-		header + m.sessionList.View().Content,
-	)
+	return styles.ActivePane.Width(m.width - 6).Height(contentH).Render(m.sessionList.View().Content)
 }
 
 // ─── Browser Screen Render ──────────────────────────────────
@@ -989,9 +1008,10 @@ func skillEntries(entries []catalog.SkillEntry) []browser.Entry {
 	out := make([]browser.Entry, 0, len(entries))
 	for _, entry := range entries {
 		badge := normalizedTool(entry.Tool, entry.RootPath)
+		targets := transferTargets(badge)
 		description := strings.TrimSpace(entry.Description)
 		if description == "" {
-			description = entry.Source
+			description = "Reusable skill bundle"
 		}
 		meta := []string{}
 		if entry.Scope != "" {
@@ -999,6 +1019,16 @@ func skillEntries(entries []catalog.SkillEntry) []browser.Entry {
 		}
 		if source := compactSource(entry.Source); source != "" {
 			meta = append(meta, source)
+		}
+		if len(entry.Files) > 1 {
+			meta = append(meta, fmt.Sprintf("%d files", len(entry.Files)))
+		}
+		details := []string{}
+		if len(targets) > 0 {
+			details = append(details, "install into: "+strings.Join(targets, ", "))
+		}
+		if entry.EntryPath != "" {
+			details = append(details, entry.EntryPath)
 		}
 
 		out = append(out, browser.Entry{
@@ -1008,8 +1038,8 @@ func skillEntries(entries []catalog.SkillEntry) []browser.Entry {
 			Badge:       badge,
 			Section:     toolSectionTitle(badge),
 			Meta:        meta,
-			Details:     []string{entry.EntryPath},
-			FilterValue: strings.Join([]string{entry.Name, description, badge, entry.Scope, entry.Source, entry.EntryPath}, " "),
+			Details:     details,
+			FilterValue: strings.Join([]string{entry.Name, description, badge, entry.Scope, entry.Source, entry.EntryPath, strings.Join(targets, " ")}, " "),
 			Raw:         entry,
 		})
 	}
@@ -1017,13 +1047,13 @@ func skillEntries(entries []catalog.SkillEntry) []browser.Entry {
 }
 
 func mcpEntries(entries []catalog.MCPEntry) []browser.Entry {
-	out := make([]browser.Entry, 0, len(entries))
+	importableEntries := make([]browser.Entry, 0, len(entries))
+	nonImportableEntries := make([]browser.Entry, 0, len(entries))
 	for _, entry := range entries {
 		badge := normalizedTool(entry.Tool, entry.Name+" "+entry.Path)
-		description := strings.TrimSpace(entry.Details)
-		if description == "" {
-			description = entry.Source
-		}
+		targets := transferTargets(badge)
+		importable := len(entry.Servers) > 0
+		description := mcpDescription(entry)
 		meta := []string{}
 		if entry.Source != "" {
 			meta = append(meta, sourceLabel(entry.Source))
@@ -1031,24 +1061,88 @@ func mcpEntries(entries []catalog.MCPEntry) []browser.Entry {
 		if entry.Format != "" {
 			meta = append(meta, entry.Format)
 		}
-		if entry.Status != "" {
+		meta = append(meta, fmt.Sprintf("%d servers", len(entry.Servers)))
+		if entry.Status != "" && entry.Status != "parsed" {
 			meta = append(meta, entry.Status)
 		}
 		title := mcpDisplayTitle(entry)
+		details := []string{}
+		if importable && len(targets) > 0 {
+			details = append(details, "import into: "+strings.Join(targets, ", "))
+		} else if !importable {
+			details = append(details, "edit this config to add mcpServers / mcp_servers")
+		}
+		details = append(details, entry.Path)
 
-		out = append(out, browser.Entry{
+		browserEntry := browser.Entry{
 			Key:         entry.Path,
 			Title:       title,
 			Description: description,
 			Badge:       badge,
 			Section:     toolSectionTitle(badge),
 			Meta:        meta,
-			Details:     []string{entry.Path},
-			FilterValue: strings.Join([]string{title, entry.Name, description, badge, entry.Source, entry.Path, strings.Join(entry.Servers, " ")}, " "),
+			Details:     details,
+			FilterValue: strings.Join([]string{title, entry.Name, description, badge, entry.Source, entry.Path, strings.Join(entry.Servers, " "), strings.Join(targets, " ")}, " "),
 			Raw:         entry,
-		})
+		}
+		if importable {
+			importableEntries = append(importableEntries, browserEntry)
+			continue
+		}
+		nonImportableEntries = append(nonImportableEntries, browserEntry)
 	}
-	return out
+	return append(importableEntries, nonImportableEntries...)
+}
+
+func countImportableMCPEntries(entries []catalog.MCPEntry) int {
+	count := 0
+	for _, entry := range entries {
+		if len(entry.Servers) > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+func mcpDescription(entry catalog.MCPEntry) string {
+	if len(entry.Servers) > 0 {
+		return fmt.Sprintf("Import %d server(s): %s", len(entry.Servers), strings.Join(entry.Servers, ", "))
+	}
+	if strings.EqualFold(entry.Status, "broken") {
+		return "Config could not be parsed into MCP servers"
+	}
+	if details := strings.TrimSpace(entry.Details); details != "" && !strings.EqualFold(details, filepath.Base(entry.Path)) {
+		return details
+	}
+	return "No importable MCP servers detected yet"
+}
+
+func transferTargets(sourceTool string) []string {
+	ordered := []string{"CLAUDE", "GEMINI", "CODEX", "OPENCODE"}
+	sourceTool = strings.TrimSpace(strings.ToUpper(sourceTool))
+	targets := make([]string, 0, len(ordered))
+	for _, candidate := range ordered {
+		if candidate == sourceTool {
+			continue
+		}
+		targets = append(targets, candidate)
+	}
+	return targets
+}
+
+func (m MainModel) translatePaneClick(msg tea.MouseClickMsg) (tea.MouseClickMsg, bool) {
+	local := msg.Mouse()
+	local.Y = local.Y - m.listPaneTop()
+	if local.Y < 0 {
+		return tea.MouseClickMsg{}, false
+	}
+	return tea.MouseClickMsg(local), true
+}
+
+func (m MainModel) listPaneTop() int {
+	const appPaddingTop = 1
+	const paneBorderTop = 1
+	return appPaddingTop + lipgloss.Height(m.renderHeader()) + paneBorderTop
 }
 
 func normalizedTool(tool string, fallback string) string {
