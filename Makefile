@@ -41,7 +41,7 @@ test-e2e:
 	fi
 
 # Create a release binary for the current VERSION.
-# Usage: make release VERSION=v0.1.7
+# Usage: make release VERSION=v0.1.8
 release: tidy test
 	go build -ldflags "$(LDFLAGS)" -trimpath -o ./bin/work-bridge ./cmd/work-bridge
 	@echo "Built work-bridge $(VERSION) ($(COMMIT))"

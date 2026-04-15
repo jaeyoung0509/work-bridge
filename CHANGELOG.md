@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-04-15
+
+### Changed
+
+- **Searchable TUI browsing** — Projects, Sessions, Skills, and MCP views now expose an explicit search field with live filtering.
+- **Tool-grouped assets** — Skills and MCP entries are grouped by LLM/tool with richer metadata and clearer action labels.
+- **Handoff button stability** — Focused handoff actions now keep a stable box model, so the layout no longer shifts when selecting buttons.
+
 ## [0.1.7] - 2026-04-14
 
 ### Added
@@ -79,7 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Skills and MCP server collection and cross-agent re-emission
 - `.work-bridge/<tool>/` managed project root pattern
 
-[Unreleased]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.6...v0.1.7
 [0.1.5]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/jaeyoung0509/work-bridge/releases/tag/v0.1.4

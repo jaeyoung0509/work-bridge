@@ -20,7 +20,7 @@ import (
 
 // Version, Commit, and BuildDate are overridden at build time via -ldflags:
 //
-//	go build -ldflags "-X 'github.com/jaeyoung0509/work-bridge/internal/cli.Version=v0.1.7'"
+//	go build -ldflags "-X 'github.com/jaeyoung0509/work-bridge/internal/cli.Version=v0.1.8'"
 //
 // When built without ldflags (e.g. go run, go test) these default to "dev" / "unknown".
 var (
