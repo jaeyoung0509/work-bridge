@@ -7,8 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	teav1 "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/list"
+	teav1 "github.com/charmbracelet/bubbletea"
 	"github.com/jaeyoung0509/work-bridge/internal/ui/styles"
 )
 
@@ -60,9 +60,9 @@ type delegate struct {
 	spacing int
 }
 
-func (d delegate) Height() int                                  { return d.height }
-func (d delegate) Spacing() int                                 { return d.spacing }
-func (d delegate) Update(_ teav1.Msg, _ *list.Model) teav1.Cmd  { return nil }
+func (d delegate) Height() int                                 { return d.height }
+func (d delegate) Spacing() int                                { return d.spacing }
+func (d delegate) Update(_ teav1.Msg, _ *list.Model) teav1.Cmd { return nil }
 
 func (d delegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
 	it, ok := listItem.(item)

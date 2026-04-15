@@ -158,7 +158,7 @@ var (
 			Padding(0, 1)
 
 	SearchPlaceholder = lipgloss.NewStyle().
-			Foreground(ColorTextMute)
+				Foreground(ColorTextMute)
 
 	Cursor = lipgloss.NewStyle().
 		Background(ColorAccent).

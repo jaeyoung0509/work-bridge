@@ -125,46 +125,46 @@ type MainModel struct {
 	backend Backend
 	options Options
 
-	screen          AppScreen
-	screenStack     []AppScreen
-	cmdPalette      cmdpalette.Model
-	actionCursor    int
+	screen       AppScreen
+	screenStack  []AppScreen
+	cmdPalette   cmdpalette.Model
+	actionCursor int
 
 	// Data
-	projects        []catalog.ProjectEntry
-	projectList     browser.Model
+	projects          []catalog.ProjectEntry
+	projectList       browser.Model
 	activeProjectRoot string
 
 	workspace       switcher.Workspace
 	sessionList     session.Model
 	selectedSession *switcher.WorkspaceItem
 
-	handoffView     handoff.Model
-	browserView     browser.Model
-	browserTitle    string
-	actionMenuView  actionmenu.Model
+	handoffView    handoff.Model
+	browserView    browser.Model
+	browserTitle   string
+	actionMenuView actionmenu.Model
 
-	running         actionKind
-	lastErr         error
+	running actionKind
+	lastErr error
 
-	quitting        bool
-	width           int
-	height          int
+	quitting bool
+	width    int
+	height   int
 }
 
 // ─── Constructor ────────────────────────────────────────────
 
 func NewMainModel(ctx context.Context, backend Backend, opts Options) MainModel {
 	return MainModel{
-		ctx:             ctx,
-		backend:         backend,
-		options:         opts,
-		screen:          ScreenHub,
-		cmdPalette:      cmdpalette.New(cmdpalette.DefaultCommands()),
-		projectList:     browser.NewModel("Projects"),
-		sessionList:     session.NewModel(),
-		browserView:     browser.NewModel("Browser"),
-		running:         actionLoadProjects,
+		ctx:               ctx,
+		backend:           backend,
+		options:           opts,
+		screen:            ScreenHub,
+		cmdPalette:        cmdpalette.New(cmdpalette.DefaultCommands()),
+		projectList:       browser.NewModel("Projects"),
+		sessionList:       session.NewModel(),
+		browserView:       browser.NewModel("Browser"),
+		running:           actionLoadProjects,
 		activeProjectRoot: opts.ProjectRoot,
 	}
 }
@@ -868,7 +868,7 @@ func (m MainModel) renderHeader() string {
 	} else if m.lastErr != nil {
 		status = styles.ErrorText.Render(" ✗ Error")
 	}
-	return styles.Section.Render(breadcrumb + status) + "\n"
+	return styles.Section.Render(breadcrumb+status) + "\n"
 }
 
 func (m MainModel) renderBreadcrumb() string {
@@ -923,7 +923,7 @@ func (m MainModel) renderFooter() string {
 
 	footer := styles.Muted.Render(help)
 	if m.lastErr != nil {
-		footer = styles.ErrorBox.Width(m.width - 8).Render(m.lastErr.Error()) + "\n" + footer
+		footer = styles.ErrorBox.Width(m.width-8).Render(m.lastErr.Error()) + "\n" + footer
 	}
 	return "\n" + footer
 }
