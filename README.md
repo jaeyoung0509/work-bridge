@@ -211,26 +211,28 @@ This is useful when you want a reviewable, portable handoff tree before applying
 
 ## TUI
 
-Run `work-bridge` without arguments to open the interactive migration console:
+Run `work-bridge` without arguments to open the interactive TUI:
 
 ```bash
 work-bridge
 ```
 
-The TUI has been completely redesigned into a component-based wizard flow (built with Bubble Tea and Lipgloss), guiding you step-by-step:
+![work-bridge skills transfer demo](docs/images/work-bridge-demo.gif)
+
+The TUI is the primary way to browse sessions, review portable skills, and inspect MCP configs. It guides you step-by-step:
 
 1. **Session Selection**: Choose a source session from the current workspace.
 2. **Target & Options**: Select your target tool and optionally open "Advanced" to toggle native mode, session-only scope, skills, or MCP config.
 3. **Preview**: Review the planned handoff operations, affected files, and any warnings.
 4. **Confirm & Result**: Apply the changes into the project or export them to a directory, then see a detailed summary report.
 
-**Slash Commands & Browser:**
-You can type slash commands at any time to inspect workspace resources in a dedicated browser view:
+**Browser Views:**
+Type `/` at any time to inspect workspace resources in a dedicated browser view:
 - `/projects`: Scan and switch active projects (configurable via `--workspace-roots`)
 - `/skills`: Browse available project and global skills
 - `/mcp`: Browse MCP server configurations
 
-**Global Key Actions:**
+**Core Keys:**
 - `Enter` select / confirm
 - `r` refresh current view
 - `?` toggle help
@@ -239,7 +241,9 @@ You can type slash commands at any time to inspect workspace resources in a dedi
 
 ---
 
-## CLI Reference
+## Command Reference
+
+Use these commands when you want non-interactive workflows or scripting:
 
 ```text
 work-bridge [flags]
