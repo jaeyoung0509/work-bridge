@@ -28,6 +28,7 @@ func NewModel() Model {
 	l.Title = "Select a Session"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
+	l.SetShowHelp(false)
 	return Model{List: l}
 }
 

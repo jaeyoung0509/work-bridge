@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jaeyoung0509/work-bridge/internal/domain"
 	"github.com/jaeyoung0509/work-bridge/internal/platform/fsx"
 )
 
@@ -78,6 +79,29 @@ func TestScanSkillsClassifiesScopeAndTool(t *testing.T) {
 	}
 }
 
+func TestScanMCPAnnotatesToolAndScope(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	cwd := filepath.Join(root, "repo")
+
+	writeFile(t, filepath.Join(cwd, ".claude", "settings.local.json"), `{"mcpServers":{"github":{"command":"mcp-github"}}}`)
+	writeFile(t, filepath.Join(homeDir, ".codex", "config.toml"), "[mcp_servers.github]\ncommand = \"mcp-github\"\n")
+
+	entries, err := ScanMCP(fsx.OSFS{}, cwd, homeDir, domain.ToolPaths{})
+	if err != nil {
+		t.Fatalf("scan mcp failed: %v", err)
+	}
+
+	if !containsMCP(entries, filepath.Join(cwd, ".claude", "settings.local.json"), "claude", "local") {
+		t.Fatalf("expected local claude MCP entry, got %#v", entries)
+	}
+	if !containsMCP(entries, filepath.Join(homeDir, ".codex", "config.toml"), "codex", "user") {
+		t.Fatalf("expected global codex MCP entry, got %#v", entries)
+	}
+}
+
 func containsProject(projects []ProjectEntry, root string, markers ...string) bool {
 	for _, project := range projects {
 		if project.Root != root {
@@ -96,6 +120,15 @@ func containsProject(projects []ProjectEntry, root string, markers ...string) bo
 func containsSkill(skills []SkillEntry, name string, scope string, tool string) bool {
 	for _, skill := range skills {
 		if skill.Name == name && skill.Scope == scope && skill.Tool == tool {
+			return true
+		}
+	}
+	return false
+}
+
+func containsMCP(entries []MCPEntry, path string, tool string, source string) bool {
+	for _, entry := range entries {
+		if entry.Path == path && entry.Tool == tool && entry.Source == source {
 			return true
 		}
 	}

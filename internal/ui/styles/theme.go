@@ -12,21 +12,21 @@ import (
 
 var (
 	// Base surfaces
-	ColorBg        = lipgloss.Color("#1A1626")
-	ColorSurface   = lipgloss.Color("#241E35")
-	ColorSurfaceHL = lipgloss.Color("#2D2640")
-	ColorBorder    = lipgloss.Color("#3D3556")
-	ColorBorderHL  = lipgloss.Color("#7C3AED")
+	ColorBg        = lipgloss.Color("#0F172A")
+	ColorSurface   = lipgloss.Color("#111827")
+	ColorSurfaceHL = lipgloss.Color("#1E293B")
+	ColorBorder    = lipgloss.Color("#334155")
+	ColorBorderHL  = lipgloss.Color("#22D3EE")
 
 	// Primary / Accent
-	ColorPrimary   = lipgloss.Color("#7C3AED")
-	ColorAccent    = lipgloss.Color("#06B6D4")
-	ColorSecondary = lipgloss.Color("#A78BFA")
+	ColorPrimary   = lipgloss.Color("#22D3EE")
+	ColorAccent    = lipgloss.Color("#F59E0B")
+	ColorSecondary = lipgloss.Color("#38BDF8")
 
 	// Text
-	ColorText     = lipgloss.Color("#E8E2F4")
-	ColorTextDim  = lipgloss.Color("#8B82A0")
-	ColorTextMute = lipgloss.Color("#5C5470")
+	ColorText     = lipgloss.Color("#E5EEF8")
+	ColorTextDim  = lipgloss.Color("#94A3B8")
+	ColorTextMute = lipgloss.Color("#64748B")
 
 	// Semantic
 	ColorSuccess = lipgloss.Color("#10B981")
@@ -150,11 +150,24 @@ var (
 			BorderForeground(ColorPrimary).
 			Padding(0, 1)
 
+	SearchBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorBorderHL).
+			Background(ColorSurfaceHL).
+			Foreground(ColorText).
+			Padding(0, 1)
+
+	SearchPlaceholder = lipgloss.NewStyle().
+				Foreground(ColorTextMute)
+
 	Cursor = lipgloss.NewStyle().
 		Background(ColorAccent).
 		Foreground(ColorBg)
 
 	Section = lipgloss.NewStyle()
+
+	PathText = lipgloss.NewStyle().
+			Foreground(ColorTextMute)
 )
 
 // ─── Agent Card Styles ──────────────────────────────────────
@@ -237,6 +250,8 @@ var (
 	ButtonActive = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(ColorBg).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorAccent).
 			Background(ColorAccent).
 			Padding(0, 2)
 )
@@ -261,11 +276,46 @@ var (
 
 	ToolBadge = lipgloss.NewStyle().
 			Bold(true)
+
+	MetaBadge = lipgloss.NewStyle().
+			Foreground(ColorTextDim).
+			Background(ColorSurfaceHL).
+			Padding(0, 1)
+
+	MetaBadgeActive = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorBg).
+			Background(ColorAccent).
+			Padding(0, 1)
 )
 
 // ToolBadgeFor returns a tool badge styled with the agent color.
 func ToolBadgeFor(tool string) string {
 	return ToolBadge.Foreground(AgentColor(tool)).Render(strings.ToUpper(tool))
+}
+
+func MetaTag(text string) string {
+	return MetaBadge.Render(strings.ToUpper(strings.TrimSpace(text)))
+}
+
+func MetaTagActive(text string) string {
+	return MetaBadgeActive.Render(strings.ToUpper(strings.TrimSpace(text)))
+}
+
+func SectionPill(label string, tool string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = "Items"
+	}
+	style := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ColorBg).
+		Background(ColorAccent).
+		Padding(0, 1)
+	if strings.TrimSpace(tool) != "" {
+		style = style.Background(AgentColor(tool))
+	}
+	return style.Render(strings.ToUpper(label))
 }
 
 // ─── Breadcrumb ─────────────────────────────────────────────
