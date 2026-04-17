@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
 	"github.com/jaeyoung0509/work-bridge/internal/switcher"
 )
@@ -79,6 +80,28 @@ func TestApplyWithoutPreviewShowsError(t *testing.T) {
 	}
 	if model.lastErr == nil || !strings.Contains(model.lastErr.Error(), "preview not ready") {
 		t.Fatalf("expected preview-not-ready error, got %v", model.lastErr)
+	}
+}
+
+func TestActionButtonsKeepStableLayoutAcrossSelection(t *testing.T) {
+	t.Parallel()
+
+	model := New(switcher.WorkspaceItem{Tool: domain.ToolCodex, ID: "session-1", Title: "Codex task"}, "/repo/project", "")
+	model.optionCursor = 2
+	applyFocused := model.renderActionButtons(60)
+	model.optionCursor = 3
+	exportFocused := model.renderActionButtons(60)
+
+	if lipgloss.Width(applyFocused) != lipgloss.Width(exportFocused) {
+		t.Fatalf("expected stable action row width, got apply=%d export=%d", lipgloss.Width(applyFocused), lipgloss.Width(exportFocused))
+	}
+	if lipgloss.Height(applyFocused) != lipgloss.Height(exportFocused) {
+		t.Fatalf("expected stable action row height, got apply=%d export=%d", lipgloss.Height(applyFocused), lipgloss.Height(exportFocused))
+	}
+	for _, view := range []string{applyFocused, exportFocused} {
+		if !strings.Contains(view, "Prepare Resume") || !strings.Contains(view, "Export Tree") {
+			t.Fatalf("expected both action buttons in rendered view, got %q", view)
+		}
 	}
 }
 

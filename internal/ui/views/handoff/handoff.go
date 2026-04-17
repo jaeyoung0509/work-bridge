@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/presentation"
 	"github.com/jaeyoung0509/work-bridge/internal/switcher"
 	"github.com/jaeyoung0509/work-bridge/internal/ui/styles"
 )
@@ -20,7 +21,7 @@ type ApplyRequestMsg struct {
 }
 
 type ExportRequestMsg struct {
-	Request  switcher.Request
+	Request    switcher.Request
 	ExportPath string
 }
 
@@ -67,10 +68,10 @@ type Model struct {
 	showAdvanced  bool
 	optionCursor  int
 
-	preview       *switcher.Result
-	lastResult    *switcher.Result
-	lastErr       error
-	running       bool
+	preview    *switcher.Result
+	lastResult *switcher.Result
+	lastErr    error
+	running    bool
 
 	overlay       overlayKind
 	confirmAction string // "apply" or "export"
@@ -268,15 +269,16 @@ func (m Model) View() tea.View {
 func (m Model) renderOptions(width int) string {
 	var lines []string
 	lines = append(lines,
-		styles.SectionTitle.Render("◈ Handoff Configuration"),
+		styles.SectionTitle.Render("◈ Continue Setup"),
 		"",
-		styles.Muted.Render(fmt.Sprintf("  Source: %s  %s", styles.ToolBadgeFor(string(m.session.Tool)), m.session.Title)),
+		styles.Muted.Render(fmt.Sprintf("  Source session: %s  %s", styles.ToolBadgeFor(string(m.session.Tool)), m.session.Title)),
+		styles.Muted.Render(fmt.Sprintf("  Goal: open %s with the right project context and keep moving.", strings.ToUpper(string(m.target)))),
 		"",
 	)
 
 	lines = append(lines,
-		m.renderRow(rowTarget, "Target Tool", string(m.target), false),
-		m.renderRow(rowAdvanced, "Advanced", onOff(m.showAdvanced), false),
+		m.renderRow(rowTarget, "Continue In", m.targetDisplay(), false),
+		m.renderRow(rowAdvanced, "Customize", onOff(m.showAdvanced), false),
 	)
 	if m.showAdvanced {
 		lines = append(lines,
@@ -287,22 +289,10 @@ func (m Model) renderOptions(width int) string {
 		)
 	}
 	lines = append(lines, "")
-
-	applyStyle := styles.ButtonSecondary
-	exportStyle := styles.ButtonSecondary
-	rows := m.optionRows()
-	if rows[m.optionCursor] == rowApply {
-		applyStyle = styles.ButtonActive
-	}
-	if rows[m.optionCursor] == rowExport {
-		exportStyle = styles.ButtonActive
-	}
-	lines = append(lines,
-		"  "+applyStyle.Render("  ▶ Apply Handoff  ")+"  "+exportStyle.Render("  ↗ Export  "),
-	)
+	lines = append(lines, m.renderActionButtons(width))
 
 	if m.running {
-		lines = append(lines, "", styles.WarningText.Render("  ⟳ Processing..."))
+		lines = append(lines, "", styles.WarningText.Render("  ⟳ Preparing the resume path..."))
 	}
 
 	return strings.Join(lines, "\n")
@@ -310,38 +300,68 @@ func (m Model) renderOptions(width int) string {
 
 func (m Model) renderPreview(width int) string {
 	var lines []string
-	lines = append(lines, styles.SectionTitle.Render("◇ Preview"))
+	lines = append(lines, styles.SectionTitle.Render("◇ Resume Check"))
 
 	if m.preview == nil {
-		lines = append(lines, "", styles.Muted.Render("  Configure options and preview will auto-load."))
+		lines = append(lines, "", styles.Muted.Render("  work-bridge is checking how ready this resume path is."))
 		return strings.Join(lines, "\n")
 	}
 
 	plan := m.preview.Plan
+	guide := presentation.DescribePlan(plan, "preview")
 	lines = append(lines, "")
-	lines = append(lines, fmt.Sprintf("  Overall:  %s", styles.Status(plan.Status)))
-	lines = append(lines, fmt.Sprintf("  Session:  %s  %s", styles.Status(plan.Session.State), plan.Session.Summary))
-	lines = append(lines, fmt.Sprintf("  Skills:   %s  %s", styles.Status(plan.Skills.State), plan.Skills.Summary))
-	lines = append(lines, fmt.Sprintf("  MCP:      %s  %s", styles.Status(plan.MCP.State), plan.MCP.Summary))
-
-	if len(plan.PlannedFiles) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, styles.Muted.Render(fmt.Sprintf("  %d files will be updated", len(plan.PlannedFiles))))
-	}
-
-	if len(plan.Warnings) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, styles.WarningText.Render(fmt.Sprintf("  ⚠ %d warnings", len(plan.Warnings))))
-	}
+	lines = append(lines, fmt.Sprintf("  Resume readiness: %s", styles.Status(plan.Status)))
+	lines = append(lines, "  "+guide.Headline)
+	lines = append(lines, fmt.Sprintf("  Session context: %s  %s", styles.Status(plan.Session.State), plan.Session.Summary))
+	lines = append(lines, fmt.Sprintf("  Skills:          %s  %s", styles.Status(plan.Skills.State), plan.Skills.Summary))
+	lines = append(lines, fmt.Sprintf("  MCP:             %s  %s", styles.Status(plan.MCP.State), plan.MCP.Summary))
+	lines = append(lines, styles.Muted.Render(fmt.Sprintf("  work-bridge will prepare %d file(s).", len(plan.PlannedFiles))))
+	lines = appendSection(lines, "Carries Over", guide.Keeps)
+	lines = appendSection(lines, "Not Included", guide.Skips)
+	lines = appendSection(lines, "Manual Checks", guide.ManualChecks)
+	lines = appendSection(lines, "Next", guide.NextSteps)
 
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderActionButtons(width int) string {
+	rows := m.optionRows()
+	applyActive := rows[m.optionCursor] == rowApply
+	exportActive := rows[m.optionCursor] == rowExport
+
+	const gap = 2
+	apply := renderActionButton("▶ Prepare Resume", applyActive)
+	export := renderActionButton("↗ Export Tree", exportActive)
+
+	slotWidth := actionButtonSlotWidth()
+	available := width - 4
+	if available < 0 {
+		available = 0
+	}
+
+	if slotWidth*2+gap > available && available > 0 {
+		stacked := lipgloss.JoinVertical(
+			lipgloss.Left,
+			lipgloss.PlaceHorizontal(slotWidth, lipgloss.Left, apply),
+			lipgloss.PlaceHorizontal(slotWidth, lipgloss.Left, export),
+		)
+		return lipgloss.NewStyle().PaddingLeft(2).Render(stacked)
+	}
+
+	row := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		lipgloss.PlaceHorizontal(slotWidth, lipgloss.Left, apply),
+		lipgloss.NewStyle().Width(gap).Render(""),
+		lipgloss.PlaceHorizontal(slotWidth, lipgloss.Left, export),
+	)
+	return lipgloss.NewStyle().PaddingLeft(2).Render(row)
 }
 
 func (m Model) renderOverlay() string {
 	switch m.overlay {
 	case overlayConfirm:
 		lines := []string{
-			styles.Title.Render("Confirm " + strings.Title(m.confirmAction)),
+			styles.Title.Render(confirmTitle(m.confirmAction)),
 			"",
 			fmt.Sprintf("  Target:  %s", styles.ToolBadgeFor(string(m.target))),
 			fmt.Sprintf("  Mode:    %s", m.mode),
@@ -356,18 +376,25 @@ func (m Model) renderOverlay() string {
 	case overlayResult:
 		var lines []string
 		if m.lastErr != nil {
-			lines = []string{styles.Title.Render("Action Failed"), "", "  " + m.lastErr.Error()}
+			lines = []string{styles.Title.Render("Resume Blocked"), "", "  " + m.lastErr.Error()}
 		} else if m.lastResult != nil && m.lastResult.Report != nil {
 			r := m.lastResult.Report
+			operation := resultOperation(m.confirmAction)
+			guide := presentation.DescribeResult(m.lastResult.Plan, r, operation)
 			lines = []string{
-				styles.Title.Render("✓ Action Complete"),
+				styles.Title.Render(resultTitle(guide.Readiness, operation)),
 				"",
-				fmt.Sprintf("  Status:       %s", styles.Status(r.Status)),
+				fmt.Sprintf("  Resume readiness: %s", styles.Status(r.Status)),
+				"  " + guide.Headline,
 				fmt.Sprintf("  Destination:  %s", r.DestinationRoot),
-				fmt.Sprintf("  Files:        %d updated", len(r.FilesUpdated)),
+				fmt.Sprintf("  Files prepared: %d", len(r.FilesUpdated)),
 			}
-			if len(r.Errors) > 0 {
-				lines = append(lines, styles.ErrorText.Render(fmt.Sprintf("  %d errors", len(r.Errors))))
+			lines = appendSection(lines, "Carries Over", guide.Keeps)
+			lines = appendSection(lines, "Not Included", guide.Skips)
+			lines = appendSection(lines, "Manual Checks", guide.ManualChecks)
+			lines = appendSection(lines, "Next", guide.NextSteps)
+			if len(r.Errors) > 0 && guide.Readiness == presentation.ResumeReadinessBlocked {
+				lines = append(lines, "", styles.ErrorText.Render(fmt.Sprintf("  %d blocking issue(s)", len(r.Errors))))
 			}
 		} else {
 			lines = []string{"  Unknown result state"}
@@ -506,12 +533,7 @@ func (m Model) defaultExportPath() string {
 }
 
 func defaultTargetFor(source domain.Tool) domain.Tool {
-	for _, tool := range supportedTools {
-		if tool != source {
-			return tool
-		}
-	}
-	return source
+	return presentation.RecommendedTarget(source)
 }
 
 func cycleTool(current domain.Tool, direction int) domain.Tool {
@@ -533,9 +555,83 @@ func onOff(v bool) string {
 	return styles.BadgeMuted.Render("OFF")
 }
 
+func renderActionButton(label string, active bool) string {
+	style := styles.ButtonSecondary
+	if active {
+		style = styles.ButtonActive
+	}
+	return style.Render(" " + label + " ")
+}
+
+func actionButtonSlotWidth() int {
+	labels := []string{"▶ Prepare Resume", "↗ Export Tree"}
+	width := 0
+	for _, label := range labels {
+		width = max(width, lipgloss.Width(renderActionButton(label, false)))
+		width = max(width, lipgloss.Width(renderActionButton(label, true)))
+	}
+	return width
+}
+
 func scopeLabel(sessionOnly bool) string {
 	if sessionOnly {
 		return "session-only"
 	}
 	return "full"
+}
+
+func (m Model) targetDisplay() string {
+	target := strings.ToUpper(string(m.target))
+	if m.target == presentation.RecommendedTarget(m.session.Tool) {
+		return target + " (recommended)"
+	}
+	return target
+}
+
+func appendSection(lines []string, title string, items []string) []string {
+	if len(items) == 0 {
+		return lines
+	}
+	lines = append(lines, "")
+	lines = append(lines, styles.Muted.Render("  "+title))
+	for _, item := range items {
+		lines = append(lines, "  - "+item)
+	}
+	return lines
+}
+
+func confirmTitle(action string) string {
+	if action == "export" {
+		return "Confirm Export"
+	}
+	return "Confirm Resume Prep"
+}
+
+func resultOperation(action string) string {
+	if action == "export" {
+		return "export"
+	}
+	return "switch"
+}
+
+func resultTitle(readiness presentation.ResumeReadiness, operation string) string {
+	if operation == "export" {
+		switch readiness {
+		case presentation.ResumeReadinessBlocked:
+			return "Export Blocked"
+		case presentation.ResumeReadinessPartial:
+			return "Export Needs Review"
+		default:
+			return "Export Ready"
+		}
+	}
+
+	switch readiness {
+	case presentation.ResumeReadinessBlocked:
+		return "Resume Blocked"
+	case presentation.ResumeReadinessPartial:
+		return "Resume Needs Review"
+	default:
+		return "Resume Ready"
+	}
 }

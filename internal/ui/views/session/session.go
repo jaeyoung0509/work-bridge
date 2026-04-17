@@ -16,7 +16,7 @@ type Model struct {
 
 func NewModel() Model {
 	b := browser.NewModel("Sessions")
-	b.SetSubtitle("Search by session title, tool, or session id")
+	b.SetSubtitle("Recent sessions in this project appear first")
 	return Model{browser: b}
 }
 
@@ -59,6 +59,9 @@ func (m *Model) SetSessions(sessions []switcher.WorkspaceItem) {
 		details := []string{}
 		if s.ProjectRoot != "" {
 			details = append(details, s.ProjectRoot)
+		}
+		if s.UpdatedAt != "" {
+			details = append(details, "updated "+s.UpdatedAt)
 		}
 		entries = append(entries, browser.Entry{
 			Key:         s.ID,

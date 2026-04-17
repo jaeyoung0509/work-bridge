@@ -101,6 +101,9 @@ func TestMainModelHubShowsAgentCards(t *testing.T) {
 	if !strings.Contains(view, "CODEX") || !strings.Contains(view, "GEMINI") {
 		t.Fatalf("expected agent names in hub view, got %q", view)
 	}
+	if !strings.Contains(view, "Continue your work in another tool") {
+		t.Fatalf("expected continue-work messaging in hub view, got %q", view)
+	}
 }
 
 // ─── Test: Slash Commands ───────────────────────────────────
@@ -406,15 +409,9 @@ func TestHubQuickActionNavigation(t *testing.T) {
 		t.Fatalf("expected initial cursor at 0, got %d", model.actionCursor)
 	}
 
-	model = runKey(t, model, specialKey(tea.KeyDown))
-	if model.actionCursor != 1 {
-		t.Fatalf("expected cursor at 1 after down, got %d", model.actionCursor)
-	}
-
-	// Enter on "sessions" (index 1)
 	model = runKey(t, model, specialKey(tea.KeyEnter))
 	if model.screen != ScreenSessions {
-		t.Fatalf("expected sessions screen from quick action, got %v", model.screen)
+		t.Fatalf("expected sessions screen from default quick action, got %v", model.screen)
 	}
 }
 
@@ -445,6 +442,11 @@ func TestFullHandoffFlow(t *testing.T) {
 	}
 	if req.To != domain.ToolGemini {
 		t.Fatalf("expected default target gemini, got %s", req.To)
+	}
+
+	view := model.View().Content
+	if !strings.Contains(view, "Resume readiness") || !strings.Contains(view, "Continue In") {
+		t.Fatalf("expected resume-oriented handoff copy, got %q", view)
 	}
 }
 

@@ -1,14 +1,14 @@
 # work-bridge
 
 > **Switching between Claude Code, Gemini CLI, OpenCode, and Codex on the same project because of model cost or context limits?**  
-> Inspect the source session, then either apply a target-ready handoff directly into the project or export the same handoff into a separate output tree.
+> Keep moving in another tool without losing the current goal, project instructions, skills, or MCP context that matter.
 
-`work-bridge` is a local-first handoff tool for AI coding-agent workflows. It reads a source session, normalizes the useful project context, and either:
+`work-bridge` is a local-first handoff tool for AI coding-agent workflows. It reads a source session, normalizes the useful project context, and helps you:
 
-- applies a target-ready state into project-native files
-- exports the same target-ready state to a separate directory
+- prepare another tool so you can continue working there immediately
+- export the same handoff tree into a separate directory for review or transfer
 
-By default (`--mode project`), it applies changes to project files and target-native repo skill roots without touching external tool storage. Using `--mode native`, it writes a best-effort target-native continuation into the tool's home-level session store or uses the target's native CLI delegate.
+By default (`--mode project`), it writes project-local instruction files, skills, and MCP config without touching external tool storage. Using `--mode native`, it writes a best-effort native continuation into the target tool's home-level session store or uses the target's native CLI delegate.
 
 > **Stability:** `work-bridge` is still early and not fully stable. Project-native apply and export paths are covered by tests, but some migration paths are still under active refinement. Use `--dry-run` first when trying a new source/target pair.
 
@@ -20,7 +20,7 @@ By default (`--mode project`), it applies changes to project files and target-na
 
 ## Why work-bridge?
 
-Most coding-agent tools keep valuable context in incompatible formats. `work-bridge` keeps the useful project-facing parts portable:
+Most coding-agent tools keep valuable context in incompatible formats. `work-bridge` focuses on the parts that make "open another tool and keep going" actually work:
 
 | Preserved across tools | Notes |
 |------------------------|-------|
@@ -34,7 +34,7 @@ Most coding-agent tools keep valuable context in incompatible formats. `work-bri
 The current design is intentionally simpler than the older import/export pipeline:
 
 - `inspect` shows what can be handed off
-- `switch` previews and applies directly into the project
+- `switch` checks resume readiness, then prepares the target directly in the project
 - `export` writes the same target-ready state into a separate directory
 
 ---
@@ -104,13 +104,23 @@ Download the latest release from [GitHub Releases](https://github.com/jaeyoung05
 
 ## Quick Start
 
-### 1. Inspect available source sessions
+### 1. Start with the TUI
 
 ```bash
-work-bridge inspect gemini --limit 5
+work-bridge
 ```
 
-### 2. Preview a handoff into another tool
+The TUI is the default path for first-time users:
+
+1. Pick the latest session in the current project.
+2. Accept the recommended target tool.
+3. Review the `Resume readiness` check:
+   - `READY`: likely to continue immediately
+   - `PARTIAL`: continue after a few manual checks
+   - `BLOCKED`: fix issues before trusting the handoff
+4. Apply the handoff, then open the target tool and continue.
+
+### 2. Check resume readiness from the CLI
 
 ```bash
 work-bridge switch \
@@ -121,7 +131,7 @@ work-bridge switch \
   --dry-run
 ```
 
-### 3. Apply the handoff into the project
+### 3. Prepare the target tool in the project
 
 ```bash
 work-bridge switch \
@@ -131,7 +141,7 @@ work-bridge switch \
   --project /path/to/repo
 ```
 
-### 4. Or export the same target-ready tree without touching the project
+### 4. Or export a handoff tree without touching the project
 
 ```bash
 work-bridge export \
@@ -219,12 +229,12 @@ work-bridge
 
 ![work-bridge skills transfer demo](docs/images/work-bridge-demo.gif)
 
-The TUI is the primary way to browse sessions, review portable skills, and inspect MCP configs. It guides you step-by-step:
+The TUI is the primary way to continue work in another tool. It guides you step-by-step:
 
-1. **Session Selection**: Choose a source session from the current workspace.
-2. **Target & Options**: Select your target tool and optionally open "Advanced" to toggle native mode, session-only scope, skills, or MCP config.
-3. **Preview**: Review the planned handoff operations, affected files, and any warnings.
-4. **Confirm & Result**: Apply the changes into the project or export them to a directory, then see a detailed summary report.
+1. **Recent Session Selection**: Choose the latest source session from the current workspace.
+2. **Recommended Target**: Accept the suggested target tool or customize it.
+3. **Resume Check**: Review what carries over, what is skipped, and which manual checks remain.
+4. **Confirm & Result**: Prepare the resume path in the project or export a tree, then follow the next-step guidance to continue in the target tool.
 
 **Browser Views:**
 Type `/` at any time to inspect workspace resources in a dedicated browser view:

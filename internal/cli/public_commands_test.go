@@ -128,6 +128,35 @@ func TestSwitchCommandRendersJSONDryRun(t *testing.T) {
 	}
 }
 
+func TestSwitchCommandTextOutputUsesResumeLanguage(t *testing.T) {
+	repoRoot := testutil.RepoRoot(t)
+	fixture := testutil.StageFixture(t, filepath.Join(repoRoot, "testdata", "fixtures", "codex", "basic_latest"))
+	seedSwitchAssetsForCLI(t, fixture)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	app := newFixtureApp(t, fixture)
+	app.stdout = &stdout
+	app.stderr = &stderr
+
+	exitCode := app.Run(context.Background(), []string{
+		"switch",
+		"--from", "codex",
+		"--session", "latest",
+		"--to", "claude",
+		"--project", fixture.WorkspaceDir,
+		"--dry-run",
+	})
+	if exitCode != ExitOK {
+		t.Fatalf("expected exit code %d, got %d (stderr=%q)", ExitOK, exitCode, stderr.String())
+	}
+	for _, want := range []string{"resume readiness:", "what carries over", "manual checks", "next steps"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("expected switch text output to contain %q, got %q", want, stdout.String())
+		}
+	}
+}
+
 func TestExportCommandWritesTargetReadyFiles(t *testing.T) {
 	repoRoot := testutil.RepoRoot(t)
 	fixture := testutil.StageFixture(t, filepath.Join(repoRoot, "testdata", "fixtures", "codex", "basic_latest"))

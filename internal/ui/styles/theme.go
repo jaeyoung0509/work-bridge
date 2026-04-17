@@ -6,6 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/presentation"
 )
 
 // ─── Color Palette ──────────────────────────────────────────
@@ -346,7 +347,7 @@ func Status(state domain.SwitchState) string {
 	default:
 		style = Highlight
 	}
-	return style.Render(strings.ToUpper(string(state)))
+	return style.Render(presentation.ReadinessLabel(state))
 }
 
 // ConnBadge returns a connection status badge.

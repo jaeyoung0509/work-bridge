@@ -13,19 +13,19 @@ import (
 func (a *App) newExportCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export",
-		Short: "Export a target-ready handoff without applying to the project.",
+		Short: "Export a handoff tree so you can continue elsewhere later.",
 		Args:  cobra.NoArgs,
 		RunE:  a.runExport,
 	}
 	cmd.Flags().String("from", "", "Source tool: codex, gemini, claude, opencode.")
 	cmd.Flags().String("session", "latest", "Source session identifier or latest.")
 	cmd.Flags().String("to", "", "Target tool: codex, gemini, claude, opencode.")
-	cmd.Flags().String("project", "", "Project root to scope the export.")
+	cmd.Flags().String("project", "", "Project root that the exported work should open in.")
 	cmd.Flags().String("mode", "project", "Export mode: project, native.")
-	cmd.Flags().String("out", "", "Output directory for exported target-ready files.")
-	cmd.Flags().Bool("dry-run", false, "Preview export output without writing files.")
-	cmd.Flags().Bool("no-skills", false, "Skip skills when building the export payload.")
-	cmd.Flags().Bool("no-mcp", false, "Skip MCP when building the export payload.")
+	cmd.Flags().String("out", "", "Output directory for the exported handoff tree.")
+	cmd.Flags().Bool("dry-run", false, "Check what the export would prepare without writing files.")
+	cmd.Flags().Bool("no-skills", false, "Skip skills in the exported handoff tree.")
+	cmd.Flags().Bool("no-mcp", false, "Skip MCP in the exported handoff tree.")
 	cmd.Flags().Bool("session-only", false, "Export session context only.")
 	return cmd
 }
