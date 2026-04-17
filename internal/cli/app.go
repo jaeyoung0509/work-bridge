@@ -20,7 +20,7 @@ import (
 
 // Version, Commit, and BuildDate are overridden at build time via -ldflags:
 //
-//	go build -ldflags "-X 'github.com/jaeyoung0509/work-bridge/internal/cli.Version=v0.1.8'"
+//	go build -ldflags "-X 'github.com/jaeyoung0509/work-bridge/internal/cli.Version=v0.1.9'"
 //
 // When built without ldflags (e.g. go run, go test) these default to "dev" / "unknown".
 var (
@@ -179,8 +179,8 @@ func (a *App) initConfig(cmd *cobra.Command) error {
 func (a *App) newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "work-bridge",
-		Short:         "Project-scoped handoff CLI for coding-agent sessions.",
-		Long:          "Inspect sessions, switch a project into Claude Code, Gemini CLI, OpenCode, or Codex using explicit project or native mode, or export the same handoff into project-managed or native-store output.",
+		Short:         "Continue your work in another coding agent without losing project context.",
+		Long:          "Inspect recent sessions, prepare another tool so you can continue in the right project context, or export the same handoff tree for review and transfer.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       Version,

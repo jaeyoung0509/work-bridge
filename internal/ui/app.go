@@ -13,6 +13,7 @@ import (
 	"github.com/jaeyoung0509/work-bridge/internal/catalog"
 	"github.com/jaeyoung0509/work-bridge/internal/detect"
 	"github.com/jaeyoung0509/work-bridge/internal/domain"
+	"github.com/jaeyoung0509/work-bridge/internal/presentation"
 	"github.com/jaeyoung0509/work-bridge/internal/switcher"
 	"github.com/jaeyoung0509/work-bridge/internal/ui/styles"
 	"github.com/jaeyoung0509/work-bridge/internal/ui/views/actionmenu"
@@ -83,8 +84,8 @@ type quickAction struct {
 }
 
 var hubActions = []quickAction{
-	{"/projects", "Projects", "Browse and migrate sessions per project"},
-	{"/sessions", "Sessions", "Select and import sessions"},
+	{"/sessions", "Continue", "Pick a recent session and continue in another tool"},
+	{"/projects", "Projects", "Choose a project before you continue"},
 	{"/mcp", "MCP", "Manage MCP server configurations"},
 	{"/skills", "Skills", "Browse available skills"},
 }
@@ -779,7 +780,7 @@ func (m MainModel) renderHub() string {
 	// Title section
 	b.WriteString(styles.Title.Render("◆ work-bridge"))
 	b.WriteString("  ")
-	b.WriteString(styles.Muted.Render("Multi-agent session handoff"))
+	b.WriteString(styles.Muted.Render("Continue your work in another tool"))
 	b.WriteString("\n\n")
 
 	// Agent cards
@@ -789,7 +790,7 @@ func (m MainModel) renderHub() string {
 	b.WriteString("\n\n")
 
 	// Quick actions
-	b.WriteString(styles.SectionTitle.Render("Quick Actions"))
+	b.WriteString(styles.SectionTitle.Render("Continue Work"))
 	b.WriteString("\n\n")
 	for i, action := range hubActions {
 		var line string
@@ -807,7 +808,7 @@ func (m MainModel) renderHub() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styles.Muted.Render("Type / to open command palette • ↑↓ to navigate • Enter to select"))
+	b.WriteString(styles.Muted.Render("Start with your latest session • Type / for commands • ↑↓ to navigate • Enter to select"))
 
 	return b.String()
 }
@@ -909,7 +910,7 @@ func (m MainModel) renderBreadcrumb() string {
 			parts = append(parts, styles.BreadcrumbItem.Render("Sessions"))
 			parts = append(parts, styles.BreadcrumbActive.Render(m.selectedSession.Title))
 		} else {
-			parts = append(parts, styles.BreadcrumbActive.Render("Handoff"))
+			parts = append(parts, styles.BreadcrumbActive.Render("Continue"))
 		}
 	case ScreenBrowser:
 		parts = append(parts, styles.BreadcrumbActive.Render(m.browserTitle))
@@ -931,9 +932,9 @@ func (m MainModel) renderFooter() string {
 	case ScreenProjects:
 		help = "type: filter • ↑↓: navigate • enter: open project • backspace: clear • esc: back"
 	case ScreenSessions:
-		help = "type: filter • ↑↓: navigate • enter: handoff • esc: back • /: commands"
+		help = "type: filter • ↑↓: navigate • enter: continue • esc: back • /: commands"
 	case ScreenHandoff:
-		help = "↑↓: options • ←→: adjust • enter: confirm • esc: back"
+		help = "↑↓: options • ←→: adjust • enter: prepare resume • esc: back"
 	case ScreenBrowser:
 		help = "type: filter • ↑↓: navigate • enter: actions • backspace: clear • esc: back"
 	case ScreenActionMenu:
@@ -952,13 +953,13 @@ func (m MainModel) renderFooter() string {
 func actionLabel(action actionKind) string {
 	switch action {
 	case actionApply:
-		return "applying"
+		return "preparing resume"
 	case actionExport:
-		return "exporting"
+		return "exporting handoff tree"
 	case actionPreview:
-		return "previewing"
+		return "checking resume path"
 	case actionLoadWorkspace:
-		return "loading workspace"
+		return "loading recent sessions"
 	case actionLoadProjects:
 		return "scanning projects"
 	case actionLoadSkills:
@@ -973,11 +974,11 @@ func actionLabel(action actionKind) string {
 }
 
 func shortPath(path string) string {
-	parts := strings.Split(path, "/")
-	if len(parts) > 2 {
-		return parts[len(parts)-1]
+	short := presentation.ShortPath(path)
+	if short == "" {
+		return path
 	}
-	return path
+	return short
 }
 
 func projectEntries(entries []catalog.ProjectEntry) []browser.Entry {

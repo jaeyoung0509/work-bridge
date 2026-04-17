@@ -1,6 +1,6 @@
 {
   "name": "@work-bridge/work-bridge",
-  "version": "0.1.1",
+  "version": "0.1.9",
   "description": "Portable session migration CLI for Claude Code, Gemini CLI, OpenCode, and Codex CLI.",
   "homepage": "https://github.com/jaeyoung0509/work-bridge",
   "repository": {

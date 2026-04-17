@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-04-17
+
+### Changed
+
+- **Resume-first positioning** — Reframed work-bridge around continuing work in another tool, including updated CLI/TUI copy and README quick-start guidance.
+- **Resume readiness presentation** — Added a shared presentation layer for `READY` / `PARTIAL` / `BLOCKED`, actionable manual checks, preserved context summaries, and next-step guidance across TUI and CLI output.
+- **Stable handoff actions** — Reworked the handoff action buttons to use fixed Charm/lipgloss layout slots so focus changes no longer shift the button row.
+
 ## [0.1.8] - 2026-04-15
 
 ### Changed
@@ -87,7 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Skills and MCP server collection and cross-agent re-emission
 - `.work-bridge/<tool>/` managed project root pattern
 
-[Unreleased]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.6...v0.1.7
 [0.1.5]: https://github.com/jaeyoung0509/work-bridge/compare/v0.1.4...v0.1.5
